@@ -86,6 +86,9 @@ importers:
       '@nocobase/db':
         specifier: 1.0.0-beta.29
         version: 1.0.0-beta.29(mysql2@3.24.6(@types/node@24.19.2))(pg-query-stream@4.17.1(pg@8.23.1))(pg@8.23.1)(tedious@20.3.9)
+      '@nocobase/db-postgres':
+        specifier: 0.1.0-beta.5
+        version: 0.1.0-beta.5(@nocobase/db@1.0.0-beta.29(mysql2@3.24.6(@types/node@24.19.2))(pg-query-stream@4.17.1(pg@8.23.1))(pg@8.23.1)(tedious@20.3.9))(mysql2@3.24.6(@types/node@24.19.2))(tedious@20.3.9)
       '@nocobase/db-sqlite':
         specifier: 0.1.0-beta.6
         version: 0.1.0-beta.6(@nocobase/db@1.0.0-beta.29(mysql2@3.24.6(@types/node@24.19.2))(pg-query-stream@4.17.1(pg@8.23.1))(pg@8.23.1)(tedious@20.3.9))(mysql2@3.24.6(@types/node@24.19.2))(pg-query-stream@4.17.1(pg@8.23.1))(pg@8.23.1)
@@ -168,9 +171,6 @@ importers:
       '@nocobase/db-oracle':
         specifier: 0.1.0-beta.5
         version: 0.1.0-beta.5(@nocobase/db@1.0.0-beta.29(mysql2@3.24.6(@types/node@24.19.2))(pg-query-stream@4.17.1(pg@8.23.1))(pg@8.23.1)(tedious@20.3.9))(mysql2@3.24.6(@types/node@24.19.2))(pg-query-stream@4.17.1(pg@8.23.1))(pg@8.23.1)(tedious@20.3.9)
-      '@nocobase/db-postgres':
-        specifier: 0.1.0-beta.5
-        version: 0.1.0-beta.5(@nocobase/db@1.0.0-beta.29(mysql2@3.24.6(@types/node@24.19.2))(pg-query-stream@4.17.1(pg@8.23.1))(pg@8.23.1)(tedious@20.3.9))(mysql2@3.24.6(@types/node@24.19.2))(tedious@20.3.9)
       '@nocobase/dev-config':
         specifier: 0.1.0-beta.25
         version: 0.1.0-beta.25(027e7d5991143f3dd7da90194ceddeb5)

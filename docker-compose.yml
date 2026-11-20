@@ -1,0 +1,61 @@
+# Production stack for Dokploy (Compose, source = this Git repository).
+#
+# Secrets come from Dokploy → Environment (they become the .env next to this file):
+#   SECRETS_KEYS=1:<openssl rand -hex 32>
+#   DB_PASSWORD=<strong password>
+#   INITIAL_ADMIN_USERNAME=admin
+#   INITIAL_ADMIN_EMAIL=<email>
+#   INITIAL_ADMIN_PASSWORD=<strong password>
+#   APP_PUBLIC_ORIGIN=https://nocofin.dsc.edu.vn
+#
+# The public domain is attached in Dokploy → Domains: service `app`, container port 13000, path `/`, HTTPS on.
+# Dokploy then adds the Traefik labels and the dokploy-network itself, so neither is written here.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nocofin-app:main
+    init: true
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # Serve at the domain root so https://nocofin.dsc.edu.vn/ opens the app (the image default is /main).
+      APP_BASE_PATH: /
+      APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN}
+      SECRETS_KEYS: ${SECRETS_KEYS:?set SECRETS_KEYS in Dokploy Environment}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:?set INITIAL_ADMIN_EMAIL}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?set INITIAL_ADMIN_PASSWORD}
+      DB_DIALECT: postgres
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: nocofin
+      DB_USERNAME: nocofin
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+    volumes:
+      - nocofin-storage:/app/storage
+    expose:
+      - '13000'
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nocofin
+      POSTGRES_USER: nocofin
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+    volumes:
+      - nocofin-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nocofin -d nocofin']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  nocofin-storage:
+  nocofin-pg:
