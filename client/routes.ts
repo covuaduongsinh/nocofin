@@ -2,8 +2,9 @@ import databaseExplorerRoutes from './pages/settings/database-explorer/routes.js
 import { createAppClientConfig } from '@nocobase/app-client';
 import { readAppClientRuntimeConfig } from '@nocobase/app-client/runtime';
 import { includeNotificationTemplateRoutes } from './pages/settings/notification-routes.js';
-import { Home } from 'lucide-react';
+import { Home, TrendingUp, ReceiptText, Landmark, Building2 } from 'lucide-react';
 import settingsShellRoutes from './pages/settings/shell-routes.js';
+import systemSettingsRoutes from './pages/settings/routes.js';
 import {
   defineAppRoutes,
   type AppClientRouteContribution,
@@ -17,7 +18,7 @@ const appRoutes: AppClientRouteContribution = defineAppRoutes([
     auth: 'required',
     componentLoader: () => import('./pages/home/index.js'),
     name: 'home',
-    navigation: { title: 'navigation.home', icon: Home },
+    navigation: { title: 'navigation.home', icon: Home, order: 1 },
     path: '/',
   },
   {
@@ -69,6 +70,73 @@ const appRoutes: AppClientRouteContribution = defineAppRoutes([
   },
 ]);
 
+const financeRoutes: AppClientRouteContribution = defineAppRoutes([
+  {
+    name: 'financeOverview',
+    path: '/finance',
+    auth: 'required',
+    authz: {
+      resource: { type: 'page', id: 'finance.overview' },
+      action: 'access',
+    },
+    navigation: {
+      title: 'navigation.financeOverview',
+      icon: TrendingUp,
+      order: 10,
+    },
+    breadcrumb: { title: 'navigation.financeOverview' },
+    componentLoader: () => import('./pages/finance/index.js'),
+  },
+  {
+    name: 'financeTransactions',
+    path: '/finance/transactions',
+    auth: 'required',
+    authz: {
+      resource: { type: 'page', id: 'finance.transactions' },
+      action: 'access',
+    },
+    navigation: {
+      title: 'navigation.financeTransactions',
+      icon: ReceiptText,
+      order: 20,
+    },
+    breadcrumb: { title: 'navigation.financeTransactions' },
+    componentLoader: () => import('./pages/finance/transactions.js'),
+  },
+  {
+    name: 'financeAccounts',
+    path: '/finance/accounts',
+    auth: 'required',
+    authz: {
+      resource: { type: 'page', id: 'finance.accounts' },
+      action: 'access',
+    },
+    navigation: {
+      title: 'navigation.financeAccounts',
+      icon: Landmark,
+      order: 30,
+    },
+    breadcrumb: { title: 'navigation.financeAccounts' },
+    componentLoader: () => import('./pages/finance/accounts.js'),
+  },
+  {
+    name: 'financeBranches',
+    path: '/finance/branches',
+    auth: 'required',
+    authz: {
+      resource: { type: 'page', id: 'finance.branches' },
+      action: 'access',
+    },
+    navigation: {
+      title: 'navigation.financeBranches',
+      icon: Building2,
+      order: 40,
+    },
+    breadcrumb: { title: 'navigation.financeBranches' },
+    componentLoader: () => import('./pages/finance/branches.js'),
+  },
+]);
+
 // The System settings shell stays registered: it shows only the modules a viewer may open, and none until the
 // application or its plugins contribute one. Business administration such as `./pages/settings/routes.js` joins it.
 export function createApplicationRoutes(
@@ -76,7 +144,7 @@ export function createApplicationRoutes(
 ): readonly AppClientRouteContribution[] {
   const config = createAppClientConfig({ rawConfig });
   return includeNotificationTemplateRoutes(
-    [appRoutes, settingsShellRoutes, databaseExplorerRoutes],
+    [appRoutes, financeRoutes, settingsShellRoutes, systemSettingsRoutes, databaseExplorerRoutes],
     config.get<boolean>('notificationTemplates.invitationConfigured') === true,
   );
 }

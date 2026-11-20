@@ -1,4 +1,4 @@
-import { Users, ShieldCheck, KeyRound, ListFilter } from 'lucide-react';
+import { Users, ShieldCheck, KeyRound, ListFilter, Tag } from 'lucide-react';
 import {
   defineAppRoutes,
   type AppClientRouteContribution,
@@ -139,6 +139,27 @@ const systemSettingsRoutes: AppClientRouteContribution = defineAppRoutes([
         ],
       },
     ],
+  },
+  {
+    parent: 'settingsBusiness',
+    name: 'settingsFinanceCategories',
+    path: '/finance-categories',
+    auth: 'required',
+    authz: {
+      resource: {
+        type: 'settings',
+        id: 'finance.categories',
+      },
+      action: 'read',
+    },
+    navigation: {
+      title: 'finance.categories.title',
+      description: 'finance.categories.subtitle',
+      icon: Tag,
+      order: 10,
+    },
+    breadcrumb: { title: 'finance.categories.title' },
+    componentLoader: () => import('./finance-categories.js'),
   },
 ]);
 export default systemSettingsRoutes;

@@ -85,6 +85,7 @@ export function ClientRoute({ route }: ClientRouteProps): ReactElement {
         }
       },
       (error: unknown) => {
+        console.error('[ClientRoute:loadError]', route.name, error);
         if (active) {
           setLoadError(error);
         }
@@ -137,6 +138,7 @@ export function ClientRoute({ route }: ClientRouteProps): ReactElement {
       <ClientPageError
         route={route}
         region={region}
+        error={loadError}
         onRetry={retryLoad}
         retried={attempt > 0}
       />
@@ -149,12 +151,16 @@ export function ClientRoute({ route }: ClientRouteProps): ReactElement {
         {/* Conceal a previously allowed page during rechecks without discarding its draft. A denial unmounts it. */}
         <Activity mode={checking ? 'hidden' : 'visible'}>
           <ErrorBoundary
-            onError={() => setRenderFailed(true)}
+            onError={(err) => {
+              console.error('[ClientRoute:renderError]', route.name, err);
+              setRenderFailed(true);
+            }}
             onReset={() => setRenderFailed(false)}
-            fallbackRender={({ resetErrorBoundary }) => (
+            fallbackRender={({ error, resetErrorBoundary }) => (
               <ClientPageError
                 route={route}
                 region={region}
+                error={error}
                 onRetry={resetErrorBoundary}
               />
             )}
@@ -249,13 +255,11 @@ function ClientPageError({
   region,
   onRetry,
   retried = false,
+  error,
 }: ClientRouteStateProps & {
   readonly onRetry: () => void;
-  /**
-   * Set once a retry of the module failed too. A browser may keep answering a failed module import from its module
-   * map without fetching again, so the full reload that does fetch it becomes the second way out.
-   */
   readonly retried?: boolean;
+  readonly error?: unknown;
 }): ReactElement {
   const { t } = useTranslation();
 
@@ -274,6 +278,11 @@ function ClientPageError({
             defaultValue: `Route ${route.name} from ${route.packageName} could not be loaded.`,
           })}
         </p>
+        {Boolean(error) && (
+          <div className='max-h-48 overflow-auto rounded bg-destructive/10 p-3 text-left font-mono text-xs text-destructive'>
+            {error instanceof Error ? error.stack || error.message : String(error)}
+          </div>
+        )}
         {retried && (
           <p className='text-sm text-muted-foreground'>
             {t('status.retryFailedDescription', {
