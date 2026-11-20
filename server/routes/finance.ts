@@ -1,4 +1,7 @@
-import { authenticationToken } from '@nocobase/app-plugin-authentication';
+import {
+  authenticationToken,
+  type AuthEnv,
+} from '@nocobase/app-plugin-authentication';
 import {
   authorizationToken,
   type AuthorizationEnv,
@@ -14,8 +17,12 @@ import {
   type AppApiRouteContribution,
 } from '@nocobase/app-server/router';
 import { databaseManagerToken } from '@nocobase/db';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
+
+export type FinanceRouteEnv = {
+  Variables: AuthEnv['Variables'] & AuthorizationEnv['Variables'];
+};
 
 import { categoriesSetting } from '../finance/resources.js';
 import { FinanceService } from '../finance/service.js';
@@ -112,7 +119,7 @@ const UpdateCategorySchema = z.object({
 export const financeRoutes: AppApiRouteContribution<Application> =
   defineApiRoutes((app) => {
     const router = new Hono();
-    const routes = new Hono<AuthorizationEnv>();
+    const routes = new Hono<FinanceRouteEnv>();
 
     const auth = app.container.resolve(authenticationToken);
     const authorization = app.container.resolve(authorizationToken);
@@ -123,7 +130,7 @@ export const financeRoutes: AppApiRouteContribution<Application> =
     routes.use('*', auth.required(), authorization.middleware());
 
     const assertCan = async (
-      c: any,
+      c: Context<FinanceRouteEnv>,
       resource: { type: 'composite' | 'settings'; id: string },
       action: string,
       reason: string,
@@ -241,9 +248,10 @@ export const financeRoutes: AppApiRouteContribution<Application> =
           'create',
           'FINANCE_TRANSACTIONS_CREATE_DENIED',
         );
-        const user = c.get('auth') as { user: { id: string } };
+        const session = c.get('auth');
+        const userId = session?.user?.id ?? 'anonymous';
         const body = c.req.valid('json');
-        const data = await service.createTransaction(body, user.user.id);
+        const data = await service.createTransaction(body, userId);
         return c.json({ data });
       },
     );

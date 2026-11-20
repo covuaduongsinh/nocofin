@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseConnection } from '@nocobase/db';
+import type {
+  FinBranch,
+  FinAccount,
+  FinCategory,
+  FinTransaction,
+} from './resources.js';
 
 export interface OverviewQuery {
   period?: string;
@@ -59,7 +65,7 @@ export class FinanceService {
       txQuery = txQuery.where('branchId', '=', branchId);
     }
 
-    const periodTransactions = await txQuery.execute();
+    const periodTransactions = (await txQuery.execute()) as FinTransaction[];
 
     let totalIncome = 0;
     let totalExpense = 0;
@@ -74,18 +80,18 @@ export class FinanceService {
     const netFlow = totalIncome - totalExpense;
 
     // 2. All active accounts and their current balances across all time
-    const allAccounts = await this.connection.query
+    const allAccounts = (await this.connection.query
       .selectFrom('finAccounts')
       .selectAll()
       .orderBy('kind', 'asc')
       .orderBy('code', 'asc')
-      .execute();
+      .execute()) as FinAccount[];
 
     // Query sum of transactions for each account
-    const allTransactions = await this.connection.query
+    const allTransactions = (await this.connection.query
       .selectFrom('finTransactions')
       .select(['accountId', 'type', 'amount'])
-      .execute();
+      .execute()) as Array<{ accountId: string; type: string; amount: number | string }>;
 
     const accountTotals = new Map<string, { income: number; expense: number }>();
     for (const tx of allTransactions) {
@@ -114,11 +120,11 @@ export class FinanceService {
     });
 
     // 3. Branches performance in this period
-    const allBranches = await this.connection.query
+    const allBranches = (await this.connection.query
       .selectFrom('finBranches')
       .selectAll()
       .orderBy('code', 'asc')
-      .execute();
+      .execute()) as FinBranch[];
 
     const branchTotals = new Map<string, { income: number; expense: number }>();
     for (const tx of periodTransactions) {
@@ -142,11 +148,11 @@ export class FinanceService {
     });
 
     // 4. Categories breakdown in this period
-    const allCategories = await this.connection.query
+    const allCategories = (await this.connection.query
       .selectFrom('finCategories')
       .selectAll()
       .orderBy('sort', 'asc')
-      .execute();
+      .execute()) as FinCategory[];
 
     const catTotals = new Map<string, number>();
     for (const tx of periodTransactions) {
@@ -187,7 +193,7 @@ export class FinanceService {
     // 5. Timeline daily flow in period
     const dayTotals = new Map<string, { income: number; expense: number }>();
     for (const tx of periodTransactions) {
-      const dateKey = typeof tx.date === 'string' ? tx.date : new Date(tx.date).toISOString().slice(0, 10);
+      const dateKey = typeof tx.date === 'string' ? tx.date : new Date(tx.date as any).toISOString().slice(0, 10);
       const entry = dayTotals.get(dateKey) ?? { income: 0, expense: 0 };
       const amt = Number(tx.amount);
       if (tx.type === 'income') entry.income += amt;
@@ -262,38 +268,38 @@ export class FinanceService {
     const total = Number(countResult?.count || 0);
 
     // Fetch page rows
-    const rows = await baseQuery
+    const rows = (await baseQuery
       .selectAll()
       .orderBy('date', 'desc')
       .orderBy('createdAt', 'desc')
       .limit(pageSize)
       .offset(offset)
-      .execute();
+      .execute()) as FinTransaction[];
 
     // Enrich with names
-    const categories = await this.connection.query
+    const categories = (await this.connection.query
       .selectFrom('finCategories')
       .select(['id', 'code', 'name', 'type'])
-      .execute();
+      .execute()) as Array<{ id: string; code: string; name: string; type: string }>;
     const catMap = new Map(categories.map((c) => [c.id, c]));
 
-    const accounts = await this.connection.query
+    const accounts = (await this.connection.query
       .selectFrom('finAccounts')
       .select(['id', 'code', 'name', 'kind', 'bankName', 'accountNumber'])
-      .execute();
+      .execute()) as Array<{ id: string; code: string; name: string; kind: string; bankName: string | null; accountNumber: string | null }>;
     const accMap = new Map(accounts.map((a) => [a.id, a]));
 
-    const branches = await this.connection.query
+    const branches = (await this.connection.query
       .selectFrom('finBranches')
       .select(['id', 'code', 'name'])
-      .execute();
+      .execute()) as Array<{ id: string; code: string; name: string }>;
     const branchMap = new Map(branches.map((b) => [b.id, b]));
 
     const enrichedRows = rows.map((r) => {
       const cat = catMap.get(r.categoryId);
       const acc = accMap.get(r.accountId);
       const branch = r.branchId ? branchMap.get(r.branchId) : null;
-      const dateStr = typeof r.date === 'string' ? r.date : new Date(r.date).toISOString().slice(0, 10);
+      const dateStr = typeof r.date === 'string' ? r.date : new Date(r.date as any).toISOString().slice(0, 10);
       return {
         ...r,
         amount: Number(r.amount),
@@ -445,17 +451,17 @@ export class FinanceService {
    * Accounts CRUD
    */
   async listAccounts() {
-    const accounts = await this.connection.query
+    const accounts = (await this.connection.query
       .selectFrom('finAccounts')
       .selectAll()
       .orderBy('kind', 'asc')
       .orderBy('code', 'asc')
-      .execute();
+      .execute()) as FinAccount[];
 
-    const txs = await this.connection.query
+    const txs = (await this.connection.query
       .selectFrom('finTransactions')
       .select(['accountId', 'type', 'amount'])
-      .execute();
+      .execute()) as Array<{ accountId: string; type: string; amount: number | string }>;
 
     const totals = new Map<string, { income: number; expense: number }>();
     for (const tx of txs) {
@@ -649,27 +655,27 @@ export class FinanceService {
    * Options for transaction form: active branches, active accounts, active categories
    */
   async getOptions() {
-    const branches = await this.connection.query
+    const branches = (await this.connection.query
       .selectFrom('finBranches')
       .select(['id', 'code', 'name'])
       .where('active', '=', true)
       .orderBy('code', 'asc')
-      .execute();
+      .execute()) as Array<{ id: string; code: string; name: string }>;
 
-    const accounts = await this.connection.query
+    const accounts = (await this.connection.query
       .selectFrom('finAccounts')
       .select(['id', 'code', 'name', 'kind', 'bankName', 'accountNumber'])
       .where('active', '=', true)
       .orderBy('code', 'asc')
-      .execute();
+      .execute()) as Array<{ id: string; code: string; name: string; kind: string; bankName: string | null; accountNumber: string | null }>;
 
-    const categories = await this.connection.query
+    const categories = (await this.connection.query
       .selectFrom('finCategories')
       .select(['id', 'code', 'name', 'type', 'sort'])
       .where('active', '=', true)
       .orderBy('type', 'asc')
       .orderBy('sort', 'asc')
-      .execute();
+      .execute()) as Array<{ id: string; code: string; name: string; type: string; sort: number }>;
 
     return {
       branches,
