@@ -7,4 +7,8 @@ import type { PagePermissionTitles } from './page-permissions.js';
 export const pagePermissionTitles: PagePermissionTitles = {
   // The template detail drawer shares the list page grant.
   notificationTemplate: 'settings.notificationTemplates',
+  // Tournament dialogs share the tournaments page grant.
+  financeTournamentCreate: 'finance.tournaments.create',
+  financeTournamentEdit: 'finance.tournaments.edit',
+  financeTournamentBudget: 'finance.tournaments.budgetForm.title',
 };

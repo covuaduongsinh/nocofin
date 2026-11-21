@@ -5,7 +5,6 @@ import {
 } from '@nocobase/app-client/plugins';
 import { describe, expect, it } from 'vitest';
 
-import systemSettingsRoutes from '../../client/pages/settings/routes.js';
 import applicationRoutes, {
   createApplicationRoutes,
 } from '../../client/routes.ts';
@@ -186,31 +185,23 @@ describe('app client routes', () => {
     const resolved = resolveRoutes();
 
     // The landing page and the inbox opted out of page authorization, so they are reachable by every signed-in user.
+    // Finance pages check their own page grant; the tournament dialogs and detail share the tournaments page grant.
+    // This application registers Users and Permission management (`client/pages/settings/routes.ts`) and the
+    // finance categories settings module, so their pages are pinned here too.
     expect(pageAuthorizations(resolved.routes)).toEqual([
-      { name: 'home', authorizedAs: null },
       { name: 'inbox', authorizedAs: null },
-      { name: 'settingsHome', authorizedAs: null },
-      { name: 'databaseExplorer', authorizedAs: 'database-explorer' },
-    ]);
-  });
-
-  it('includes database browsing and supports business settings registration', async () => {
-    // The built-in database browser joins the settings home without enabling business administration.
-    expect(
-      pagePaths(resolveRoutes().routes).filter((path) =>
-        path.startsWith('/settings'),
-      ),
-    ).toEqual(['/settings', '/settings/database-explorer']);
-    const built = resolveAppClientContributions([
-      {
-        packageName: '@nocobase/app-template-default',
-        routes: [...applicationRoutes, systemSettingsRoutes],
-        source: 'application',
-      },
-    ]);
-    expect(pageAuthorizations(built.routes)).toEqual([
       { name: 'home', authorizedAs: null },
-      { name: 'inbox', authorizedAs: null },
+      { name: 'financeOverview', authorizedAs: 'finance.overview' },
+      { name: 'financeTransactions', authorizedAs: 'finance.transactions' },
+      { name: 'financeAccounts', authorizedAs: 'finance.accounts' },
+      { name: 'financeBranches', authorizedAs: 'finance.branches' },
+      ...[
+        'financeTournaments',
+        'financeTournamentCreate',
+        'financeTournament',
+        'financeTournamentEdit',
+        'financeTournamentBudget',
+      ].map((name) => ({ name, authorizedAs: 'finance.tournaments' })),
       { name: 'settingsHome', authorizedAs: null },
       { name: 'settingsUsers', authorizedAs: 'user:*' },
       { name: 'settingsUserCreate', authorizedAs: 'user:*' },
@@ -236,9 +227,36 @@ describe('app client routes', () => {
         name,
         authorizedAs: 'settings:authorization.default-access',
       })),
+      {
+        name: 'settingsFinanceCategories',
+        authorizedAs: 'settings:finance.categories',
+      },
       { name: 'databaseExplorer', authorizedAs: 'database-explorer' },
     ]);
-    for (const loader of componentLoadersIn(built.routes))
+  });
+
+  it('includes database browsing beside the registered business settings', async () => {
+    // The built-in database browser joins the settings home beside the business administration this application
+    // registers (Users, Permission management and finance categories).
+    const resolved = resolveRoutes();
+    expect(
+      pagePaths(resolved.routes).filter((path) => path.startsWith('/settings')),
+    ).toEqual([
+      '/settings',
+      '/settings/users',
+      '/settings/users/create',
+      '/settings/users/:userId',
+      '/settings/users/:userId/edit',
+      '/settings/roles',
+      '/settings/roles/create',
+      '/settings/roles/:key/edit',
+      '/settings/default-access',
+      '/settings/default-access/create',
+      '/settings/default-access/:key/edit',
+      '/settings/finance-categories',
+      '/settings/database-explorer',
+    ]);
+    for (const loader of componentLoadersIn(resolved.routes))
       await expect(loader()).resolves.toMatchObject({
         default: expect.any(Function),
       });

@@ -89,6 +89,7 @@ const transaction: FinanceTransaction = {
   branchId: 'b1',
   counterparty: 'Phụ huynh em An',
   description: 'Học phí K28',
+  tournamentId: null,
   createdById: 'admin-id',
   createdAt: '2026-11-20T03:00:00.000Z',
   updatedAt: '2026-11-20T03:00:00.000Z',
@@ -98,6 +99,8 @@ const transaction: FinanceTransaction = {
   accountCode: 'MB1',
   branchName: 'CS 1',
   branchCode: 'CS1',
+  tournamentCode: '',
+  tournamentName: '',
 };
 const transactionPage: FinanceTransactionPage = {
   rows: [transaction],
@@ -119,6 +122,15 @@ const options: FinanceOptionsData = {
   ],
   categories: [
     { id: 'c1', code: 'HP', name: 'Học phí', type: 'income', sort: 10 },
+  ],
+  tournaments: [
+    {
+      id: 'tour-1',
+      code: 'GD-2026-01',
+      name: 'Giải mùa đông',
+      branchId: 'b1',
+      status: 'planning',
+    },
   ],
 };
 const overview: FinanceOverviewData = {
@@ -452,6 +464,8 @@ describe('Finance pages', () => {
       branchId: 'b1',
       counterparty: null,
       description: null,
+      // Optional: a voucher belongs to no tournament unless one is chosen.
+      tournamentId: null,
     });
   });
 });

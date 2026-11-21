@@ -2,7 +2,14 @@ import databaseExplorerRoutes from './pages/settings/database-explorer/routes.js
 import { createAppClientConfig } from '@nocobase/app-client';
 import { readAppClientRuntimeConfig } from '@nocobase/app-client/runtime';
 import { includeNotificationTemplateRoutes } from './pages/settings/notification-routes.js';
-import { Home, TrendingUp, ReceiptText, Landmark, Building2 } from 'lucide-react';
+import {
+  Home,
+  TrendingUp,
+  ReceiptText,
+  Landmark,
+  Building2,
+  Trophy,
+} from 'lucide-react';
 import settingsShellRoutes from './pages/settings/shell-routes.js';
 import systemSettingsRoutes from './pages/settings/routes.js';
 import {
@@ -135,6 +142,63 @@ const financeRoutes: AppClientRouteContribution = defineAppRoutes([
     breadcrumb: { title: 'navigation.financeBranches' },
     componentLoader: () => import('./pages/finance/branches.js'),
   },
+  {
+    // Tournament finance (phase 3): each tournament's budget, receipts, payments and result.
+    name: 'financeTournaments',
+    path: '/finance/tournaments',
+    auth: 'required',
+    authz: {
+      resource: { type: 'page', id: 'finance.tournaments' },
+      action: 'access',
+    },
+    navigation: {
+      title: 'navigation.financeTournaments',
+      icon: Trophy,
+      order: 50,
+    },
+    breadcrumb: { title: 'navigation.financeTournaments' },
+    componentLoader: () => import('./pages/finance/tournaments/index.js'),
+    children: [
+      {
+        // Static, so it wins over :tournamentId.
+        name: 'financeTournamentCreate',
+        path: 'new',
+        presentation: { kind: 'dialog', title: 'finance.tournaments.create' },
+        componentLoader: () =>
+          import('./pages/finance/tournaments/tournament-form.js'),
+      },
+      {
+        // The tournament's page covers the list, which stays mounted with its filter.
+        name: 'financeTournament',
+        path: ':tournamentId',
+        breadcrumb: { title: 'finance.tournaments.detail' },
+        presentation: { kind: 'child-page' },
+        componentLoader: () => import('./pages/finance/tournaments/detail.js'),
+        children: [
+          {
+            name: 'financeTournamentEdit',
+            path: 'edit',
+            presentation: {
+              kind: 'dialog',
+              title: 'finance.tournaments.edit',
+            },
+            componentLoader: () =>
+              import('./pages/finance/tournaments/tournament-form.js'),
+          },
+          {
+            name: 'financeTournamentBudget',
+            path: 'budget',
+            presentation: {
+              kind: 'dialog',
+              title: 'finance.tournaments.budgetForm.title',
+            },
+            componentLoader: () =>
+              import('./pages/finance/tournaments/budget-form.js'),
+          },
+        ],
+      },
+    ],
+  },
 ]);
 
 // The System settings shell stays registered: it shows only the modules a viewer may open, and none until the
@@ -144,7 +208,13 @@ export function createApplicationRoutes(
 ): readonly AppClientRouteContribution[] {
   const config = createAppClientConfig({ rawConfig });
   return includeNotificationTemplateRoutes(
-    [appRoutes, financeRoutes, settingsShellRoutes, systemSettingsRoutes, databaseExplorerRoutes],
+    [
+      appRoutes,
+      financeRoutes,
+      settingsShellRoutes,
+      systemSettingsRoutes,
+      databaseExplorerRoutes,
+    ],
     config.get<boolean>('notificationTemplates.invitationConfigured') === true,
   );
 }

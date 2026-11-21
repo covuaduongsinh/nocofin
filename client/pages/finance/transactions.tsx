@@ -1,4 +1,5 @@
 import { useApiClient, useSubmission, useToaster } from '@nocobase/app-client';
+import { useAuthentication } from '@nocobase/app-plugin-authentication/client';
 import { useTranslation } from '@nocobase/i18n/client';
 import {
   Plus,
@@ -25,14 +26,6 @@ import {
   TableRow,
 } from '#components/ui/table';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '#components/ui/dialog';
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -50,19 +43,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '#components/ui/select';
-import { Textarea } from '#components/ui/textarea';
 
-import {
-  formatDate,
-  formatVnd,
-  getCurrentMonth,
-  getTodayDate,
-} from './format.js';
+import { formatDate, formatVnd, getCurrentMonth } from './format.js';
+import { VoucherDialog, type VoucherRequest } from './voucher-dialog.js';
 import type {
   FinanceOptionsData,
   FinanceTransaction,
   FinanceTransactionPage,
-  TransactionType,
 } from './types.js';
 
 export default function FinanceTransactionsPage(): ReactElement {
@@ -85,23 +72,25 @@ export default function FinanceTransactionsPage(): ReactElement {
   const [totalCount, setTotalCount] = useState<number>(0);
   const [options, setOptions] = useState<FinanceOptionsData | null>(null);
 
-  // Dialog State (Create or Edit)
-  const [dialogOpen, setDialogOpen] = useState<boolean>(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [voucherType, setVoucherType] = useState<TransactionType>('income');
-  const [formDate, setFormDate] = useState<string>(getTodayDate);
-  const [formAmount, setFormAmount] = useState<string>('');
-  const [formCategoryId, setFormCategoryId] = useState<string>('');
-  const [formAccountId, setFormAccountId] = useState<string>('');
-  const [formBranchId, setFormBranchId] = useState<string>('');
-  const [formCounterparty, setFormCounterparty] = useState<string>('');
-  const [formDescription, setFormDescription] = useState<string>('');
+  // The voucher form, mounted per opening (see VoucherDialog).
+  const [voucherRequest, setVoucherRequest] = useState<{
+    key: number;
+    request: VoucherRequest;
+  } | null>(null);
+  const openVoucher = (request: VoucherRequest) =>
+    setVoucherRequest((current) => ({
+      key: (current?.key ?? 0) + 1,
+      request,
+    }));
 
   // Delete State
   const [deletingTransaction, setDeletingTransaction] =
     useState<FinanceTransaction | null>(null);
 
-  const submission = useSubmission({ scope: 'finance-voucher-mutation' });
+  const { session } = useAuthentication();
+  const deletion = useSubmission({
+    scope: `${session?.user.id}:finance:voucher-delete`,
+  });
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -161,135 +150,10 @@ export default function FinanceTransactionsPage(): ReactElement {
     .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
   const currentNet = currentTotalIncome - currentTotalExpense;
 
-  const openCreateDialog = (type: TransactionType) => {
-    setEditingId(null);
-    setVoucherType(type);
-    setFormDate(getTodayDate());
-    setFormAmount('');
-    setFormCounterparty('');
-    setFormDescription('');
-
-    if (options) {
-      const matchingCats = options.categories.filter((c) => c.type === type);
-      if (matchingCats.length > 0) setFormCategoryId(matchingCats[0].id);
-      if (options.accounts.length > 0) setFormAccountId(options.accounts[0].id);
-      if (options.branches.length > 0) setFormBranchId(options.branches[0].id);
-    }
-
-    setDialogOpen(true);
-  };
-
-  const openEditDialog = (tx: FinanceTransaction) => {
-    setEditingId(tx.id);
-    setVoucherType(tx.type);
-    setFormDate(tx.date);
-    setFormAmount(String(tx.amount));
-    setFormCategoryId(tx.categoryId);
-    setFormAccountId(tx.accountId);
-    setFormBranchId(tx.branchId ?? '');
-    setFormCounterparty(tx.counterparty ?? '');
-    setFormDescription(tx.description ?? '');
-    setDialogOpen(true);
-  };
-
-  const handleSaveVoucher = async () => {
-    const numAmount = Number(formAmount.replace(/,/g, ''));
-    if (!numAmount || numAmount <= 0) {
-      toaster.show({
-        type: 'error',
-        title: 'Vui lòng nhập số tiền hợp lệ lớn hơn 0',
-      });
-      return;
-    }
-    if (!formCategoryId) {
-      toaster.show({
-        type: 'error',
-        title: 'Vui lòng chọn hạng mục thu/chi',
-      });
-      return;
-    }
-    if (!formAccountId) {
-      toaster.show({
-        type: 'error',
-        title: 'Vui lòng chọn tài khoản quỹ',
-      });
-      return;
-    }
-    if (!formBranchId) {
-      toaster.show({
-        type: 'error',
-        title: 'Vui lòng chọn cơ sở',
-      });
-      return;
-    }
-
-    try {
-      const outcome = await submission.run(
-        {
-          action: editingId ? 'update' : 'create',
-          id: editingId,
-          amount: numAmount,
-        },
-        async (key) => {
-          if (editingId) {
-            return api.request({
-              path: `finance/transactions/${encodeURIComponent(editingId)}`,
-              method: 'PATCH',
-              json: {
-                branchId: formBranchId,
-                accountId: formAccountId,
-                categoryId: formCategoryId,
-                amount: numAmount,
-                date: formDate,
-                counterparty: formCounterparty.trim() || null,
-                description: formDescription.trim() || null,
-              },
-              headers: {
-                'Idempotency-Key': key,
-              },
-            });
-          }
-
-          return api.request({
-            path: 'finance/transactions',
-            method: 'POST',
-            json: {
-              type: voucherType,
-              branchId: formBranchId,
-              accountId: formAccountId,
-              categoryId: formCategoryId,
-              amount: numAmount,
-              date: formDate,
-              counterparty: formCounterparty.trim() || null,
-              description: formDescription.trim() || null,
-            },
-            headers: {
-              'Idempotency-Key': key,
-            },
-          });
-        },
-      );
-
-      if (outcome) {
-        toaster.show({
-          type: 'success',
-          title: t('finance.transactions.saveSuccess'),
-        });
-        setDialogOpen(false);
-        void loadData();
-      }
-    } catch {
-      toaster.show({
-        type: 'error',
-        title: 'Lỗi khi lưu phiếu thu/chi',
-      });
-    }
-  };
-
   const handleDelete = async () => {
     if (!deletingTransaction) return;
     try {
-      const outcome = await submission.run(
+      const outcome = await deletion.run(
         { action: 'delete-voucher', id: deletingTransaction.id },
         async (key) => {
           return api.request({
@@ -329,7 +193,7 @@ export default function FinanceTransactionsPage(): ReactElement {
           <Button
             variant='default'
             className='bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5'
-            onClick={() => openCreateDialog('income')}
+            onClick={() => openVoucher({ kind: 'create', type: 'income' })}
           >
             <Plus className='size-4' />
             {t('finance.transactions.createIncome')}
@@ -337,7 +201,7 @@ export default function FinanceTransactionsPage(): ReactElement {
           <Button
             variant='outline'
             className='border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/50 gap-1.5'
-            onClick={() => openCreateDialog('expense')}
+            onClick={() => openVoucher({ kind: 'create', type: 'expense' })}
           >
             <Minus className='size-4' />
             {t('finance.transactions.createExpense')}
@@ -414,6 +278,13 @@ export default function FinanceTransactionsPage(): ReactElement {
           {/* Branch filter */}
           <div>
             <Select
+              items={[
+                { value: 'all', label: t('finance.transactions.allBranches') },
+                ...(options?.branches ?? []).map((b) => ({
+                  value: b.id,
+                  label: b.name,
+                })),
+              ]}
               value={selectedBranchId}
               onValueChange={(val) => {
                 if (typeof val === 'string') {
@@ -443,6 +314,11 @@ export default function FinanceTransactionsPage(): ReactElement {
           {/* Type filter */}
           <div>
             <Select
+              items={[
+                { value: 'all', label: t('finance.transactions.allTypes') },
+                { value: 'income', label: t('finance.transactions.income') },
+                { value: 'expense', label: t('finance.transactions.expense') },
+              ]}
               value={selectedType}
               onValueChange={(val) => {
                 if (typeof val === 'string') {
@@ -475,6 +351,13 @@ export default function FinanceTransactionsPage(): ReactElement {
             <Landmark className='size-4 text-muted-foreground' />
             <span className='text-xs text-muted-foreground'>Quỹ/TK:</span>
             <Select
+              items={[
+                { value: 'all', label: t('finance.transactions.allAccounts') },
+                ...(options?.accounts ?? []).map((a) => ({
+                  value: a.id,
+                  label: a.name,
+                })),
+              ]}
               value={selectedAccountId}
               onValueChange={(val) => {
                 if (typeof val === 'string') {
@@ -617,6 +500,15 @@ export default function FinanceTransactionsPage(): ReactElement {
                     {/* Category */}
                     <TableCell className='text-xs font-medium'>
                       {tx.categoryName ?? tx.categoryId}
+                      {tx.tournamentCode && (
+                        <Badge
+                          variant='outline'
+                          className='ml-1 text-[11px] font-normal'
+                          title={tx.tournamentName}
+                        >
+                          {tx.tournamentCode}
+                        </Badge>
+                      )}
                     </TableCell>
 
                     {/* Amount */}
@@ -670,7 +562,9 @@ export default function FinanceTransactionsPage(): ReactElement {
                         <Button
                           variant='ghost'
                           size='icon-sm'
-                          onClick={() => openEditDialog(tx)}
+                          onClick={() =>
+                            openVoucher({ kind: 'edit', voucher: tx })
+                          }
                           title='Chỉnh sửa'
                         >
                           <Edit2 className='size-3.5 text-muted-foreground hover:text-foreground' />
@@ -723,228 +617,15 @@ export default function FinanceTransactionsPage(): ReactElement {
         </div>
       </div>
 
-      {/* Create / Edit Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className='sm:max-w-lg'>
-          <DialogHeader>
-            <DialogTitle>
-              {editingId
-                ? t('finance.transactions.editVoucher')
-                : voucherType === 'income'
-                  ? t('finance.transactions.createIncome')
-                  : t('finance.transactions.createExpense')}
-            </DialogTitle>
-            <DialogDescription>
-              {editingId
-                ? 'Cập nhật thông tin chứng từ tài chính'
-                : 'Lập chứng từ thu chi mới cho Công ty Cờ vua Dương Sinh'}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className='grid gap-4 py-2'>
-            {/* If creating: Type switcher */}
-            {!editingId && (
-              <div className='grid grid-cols-2 gap-2'>
-                <Button
-                  type='button'
-                  variant={voucherType === 'income' ? 'default' : 'outline'}
-                  className={
-                    voucherType === 'income'
-                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                      : ''
-                  }
-                  onClick={() => {
-                    setVoucherType('income');
-                    if (options) {
-                      const match = options.categories.find(
-                        (c) => c.type === 'income',
-                      );
-                      if (match) setFormCategoryId(match.id);
-                    }
-                  }}
-                >
-                  + Phiếu Thu
-                </Button>
-                <Button
-                  type='button'
-                  variant={
-                    voucherType === 'expense' ? 'destructive' : 'outline'
-                  }
-                  onClick={() => {
-                    setVoucherType('expense');
-                    if (options) {
-                      const match = options.categories.find(
-                        (c) => c.type === 'expense',
-                      );
-                      if (match) setFormCategoryId(match.id);
-                    }
-                  }}
-                >
-                  - Phiếu Chi
-                </Button>
-              </div>
-            )}
-
-            {/* Date and Amount */}
-            <div className='grid grid-cols-2 gap-3'>
-              <div>
-                <label className='text-xs font-medium text-muted-foreground'>
-                  {t('finance.transactions.date')} *
-                </label>
-                <Input
-                  type='date'
-                  value={formDate}
-                  onChange={(e) => setFormDate(e.target.value)}
-                  className='mt-1'
-                />
-              </div>
-              <div>
-                <label className='text-xs font-medium text-muted-foreground'>
-                  {t('finance.transactions.amount')} *
-                </label>
-                <Input
-                  type='number'
-                  placeholder='0'
-                  value={formAmount}
-                  onChange={(e) => setFormAmount(e.target.value)}
-                  className='mt-1 font-semibold'
-                />
-                {formAmount && Number(formAmount) > 0 && (
-                  <div className='mt-1 text-xs text-primary font-medium'>
-                    = {formatVnd(Number(formAmount))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Category and Account */}
-            <div className='grid grid-cols-2 gap-3'>
-              <div>
-                <label className='text-xs font-medium text-muted-foreground'>
-                  {t('finance.transactions.category')} *
-                </label>
-                <Select
-                  value={formCategoryId}
-                  onValueChange={(val) => {
-                    if (typeof val === 'string') setFormCategoryId(val);
-                  }}
-                >
-                  <SelectTrigger className='mt-1 w-full'>
-                    <SelectValue placeholder='Chọn hạng mục' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {options?.categories
-                      .filter((c) => c.type === voucherType)
-                      .map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <label className='text-xs font-medium text-muted-foreground'>
-                  {t('finance.transactions.account')} *
-                </label>
-                <Select
-                  value={formAccountId}
-                  onValueChange={(val) => {
-                    if (typeof val === 'string') setFormAccountId(val);
-                  }}
-                >
-                  <SelectTrigger className='mt-1 w-full'>
-                    <SelectValue placeholder='Chọn quỹ / TK' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {options?.accounts.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>
-                        {a.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* Branch and Counterparty */}
-            <div className='grid grid-cols-2 gap-3'>
-              <div>
-                <label className='text-xs font-medium text-muted-foreground'>
-                  {t('finance.transactions.branch')} *
-                </label>
-                <Select
-                  value={formBranchId}
-                  onValueChange={(val) => {
-                    if (typeof val === 'string') setFormBranchId(val);
-                  }}
-                >
-                  <SelectTrigger className='mt-1 w-full'>
-                    <SelectValue placeholder='Chọn cơ sở' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {options?.branches.map((b) => (
-                      <SelectItem key={b.id} value={b.id}>
-                        {b.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <label className='text-xs font-medium text-muted-foreground'>
-                  {t('finance.transactions.counterparty')}
-                </label>
-                <Input
-                  placeholder='Học viên, Phụ huynh, Đối tác...'
-                  value={formCounterparty}
-                  onChange={(e) => setFormCounterparty(e.target.value)}
-                  className='mt-1'
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className='text-xs font-medium text-muted-foreground'>
-                {t('finance.transactions.description')}
-              </label>
-              <Textarea
-                placeholder='Nội dung chi tiết giao dịch...'
-                value={formDescription}
-                onChange={(e) => setFormDescription(e.target.value)}
-                rows={2}
-                className='mt-1'
-              />
-            </div>
-          </div>
-
-          <DialogFooter className='gap-2 sm:gap-0'>
-            <Button
-              type='button'
-              variant='outline'
-              onClick={() => setDialogOpen(false)}
-            >
-              {t('finance.transactions.cancel')}
-            </Button>
-            <Button
-              type='button'
-              disabled={submission.submitting}
-              onClick={() => void handleSaveVoucher()}
-              className={
-                voucherType === 'income'
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  : ''
-              }
-            >
-              {submission.submitting
-                ? t('finance.transactions.saving')
-                : t('finance.transactions.save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {voucherRequest && (
+        <VoucherDialog
+          key={voucherRequest.key}
+          request={voucherRequest.request}
+          options={options ?? undefined}
+          onClose={() => setVoucherRequest(null)}
+          onSaved={() => void loadData()}
+        />
+      )}
 
       {/* Delete Confirmation Alert Dialog */}
       <AlertDialog
