@@ -1,12 +1,12 @@
-import fileUi from '../extensions/nocobase-file-component-ui/locales/en-US.js';
+import fileUi from '../extensions/nocobase-file-component-ui/locales/vi-VN.js';
 import type { AppResource } from './en-US.js';
-import systemEnUS from './system/en-US.js';
+import systemViVN from './vi-VN-system.js';
 
 const viVN: AppResource = {
-  ...systemEnUS,
+  ...systemViVN,
   ...fileUi,
   navigation: {
-    ...systemEnUS.navigation,
+    ...systemViVN.navigation,
     home: 'Trang chủ',
     finance: 'Tài chính',
     financeOverview: 'Tổng quan tài chính',
@@ -37,7 +37,8 @@ const viVN: AppResource = {
     },
     overview: {
       title: 'Tổng quan Tài chính',
-      subtitle: 'Sức khỏe tài chính & dòng tiền thực tế Công ty CP Cờ vua Dương Sinh',
+      subtitle:
+        'Sức khỏe tài chính & dòng tiền thực tế Công ty CP Cờ vua Dương Sinh',
       totalIncome: 'Tổng Thu',
       totalExpense: 'Tổng Chi',
       netFlow: 'Dòng tiền Ròng (Thu - Chi)',
@@ -57,7 +58,8 @@ const viVN: AppResource = {
     },
     transactions: {
       title: 'Sổ Thu Chi',
-      subtitle: 'Ghi nhận và quản lý mọi phiếu thu, phiếu chi tiền mặt & ngân hàng',
+      subtitle:
+        'Ghi nhận và quản lý mọi phiếu thu, phiếu chi tiền mặt & ngân hàng',
       createIncome: '+ Lập Phiếu Thu',
       createExpense: '- Lập Phiếu Chi',
       editVoucher: 'Chỉnh sửa Phiếu',
@@ -89,7 +91,8 @@ const viVN: AppResource = {
     },
     accounts: {
       title: 'Tài khoản Quỹ & Ngân hàng',
-      subtitle: 'Quản lý tài khoản ngân hàng chuyển khoản và quỹ tiền mặt tại các cơ sở',
+      subtitle:
+        'Quản lý tài khoản ngân hàng chuyển khoản và quỹ tiền mặt tại các cơ sở',
       addAccount: 'Thêm tài khoản quỹ',
       editAccount: 'Chỉnh sửa tài khoản',
       code: 'Mã tài khoản',
@@ -129,7 +132,8 @@ const viVN: AppResource = {
     },
     categories: {
       title: 'Khoản mục Thu Chi',
-      subtitle: 'Danh mục phân loại các khoản thu học phí, bán hàng, chi phí vận hành',
+      subtitle:
+        'Danh mục phân loại các khoản thu học phí, bán hàng, chi phí vận hành',
       addCategory: 'Thêm khoản mục',
       editCategory: 'Sửa khoản mục',
       code: 'Mã khoản mục',

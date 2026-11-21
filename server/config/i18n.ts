@@ -6,10 +6,12 @@ import {
 import type { AppI18nConfig } from '@nocobase/app-server/i18n';
 
 const i18n: AppConfigFactory<AppI18nConfig> = defineAppConfig({
-  defaults: { defaultLocale: 'en-US' },
+  // Dương Sinh staff work in Vietnamese; English and Chinese stay in the language menu.
+  defaults: { defaultLocale: 'vi-VN' },
   env: {
     APP_DEFAULT_LOCALE: envString('defaultLocale', {
-      description: 'The language the application starts in, such as zh-CN.',
+      description:
+        'The language the application starts in, such as vi-VN or en-US.',
     }),
   },
 });
