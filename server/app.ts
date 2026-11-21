@@ -22,6 +22,8 @@ import {
 } from '@nocobase/app-server/runtime';
 import { spaRootRoutes } from '@nocobase/app-server/spa';
 
+import { acceptForwardedWebSocketSchemes } from './websocket-forwarded-proto.js';
+
 export function createApp(runtime: AppRuntimeContext): Application {
   const app = createAppFromRuntime(runtime);
 
@@ -45,6 +47,8 @@ export function createApp(runtime: AppRuntimeContext): Application {
   app.addRoutes(healthCheckApiRoutes);
   app.addRuntimeContributions(runtime);
   app.addRoutes(spaRootRoutes);
+  // Traefik forwards WebSocket handshakes as wss; see websocket-forwarded-proto.ts.
+  acceptForwardedWebSocketSchemes(app);
 
   return app;
 }
