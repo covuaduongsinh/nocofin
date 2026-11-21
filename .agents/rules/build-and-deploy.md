@@ -47,3 +47,15 @@ TypeScript and compiled JavaScript use the same source checksum for migration hi
 ## Server start log
 
 `pnpm dev` owns the ready banner and public URL; `APP_SERVER_START_LOG=false` suppresses the underlying listener announcement through the `env` of `server/config/server.ts`. Keep that mapping when editing deployment environment settings. Request starts, request headers and config diagnostics use DEBUG; the normal INFO output contains completion summaries. See the shared application development Skill for hosted logging and upgrade limits.
+
+## Production on Dokploy
+
+Production runs at `https://nocofin.dsc.edu.vn` from Dokploy (Compose, GitHub `main`, `./docker-compose.yml`, Autodeploy off — the user clicks Deploy). Keep these, each of which once broke the deployment:
+
+- `@nocobase/db-postgres` stays in `dependencies`; the image installs production dependencies only.
+- `deploy/config.yml` holds no secrets and is mounted at `/app/config.yml`; the image requires that file. Secrets live in Dokploy Environment (`SECRETS_KEYS`, `DB_PASSWORD`, `INITIAL_ADMIN_*`, `APP_PUBLIC_ORIGIN`).
+- `APP_BASE_PATH: /` in the compose file.
+- The Postgres volume is `nocofin-pgdata`; renaming it starts an empty database.
+- `server/websocket-forwarded-proto.ts`, called from `server/app.ts`: Traefik forwards WebSocket handshakes with `X-Forwarded-Proto: wss`, which otherwise fails the realtime same-origin check with 403.
+
+The full checklist and check scripts are in the user-level Skill `nocobase3-dokploy-deploy` (`~/.claude/skills/nocobase3-dokploy-deploy/`).
