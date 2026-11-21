@@ -1,0 +1,27 @@
+# Runtime configuration mounted at /app/config.yml by docker-compose.yml.
+# It holds no secrets: SECRETS_KEYS, DB_*, INITIAL_ADMIN_* and APP_PUBLIC_ORIGIN come from the
+# Dokploy Environment tab and override the defaults in server/config/.
+client:
+  app:
+    title: NocoFin
+auth:
+  emailAndPassword:
+    enabled: true
+    autoSignIn: true
+  session:
+    storeSessionInDatabase: true
+notification:
+  channels:
+    inbox:
+      type: in-app
+logging:
+  level: info
+  file:
+    enabled: true
+    retentionDays: 7
+    name: app
+    maxFileSizeMB: 10
+    maxTotalSizeMB: 500
+  console:
+    enabled: true
+    pretty: false
