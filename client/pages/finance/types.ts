@@ -53,6 +53,8 @@ export interface FinanceTransaction {
   branchId: string | null;
   counterparty: string | null;
   description: string | null;
+  /** The tournament the voucher belongs to, if any (GET finance/tournaments/:id lists them). */
+  tournamentId: string | null;
   createdById: string;
   createdAt: string;
   updatedAt: string;
@@ -62,6 +64,9 @@ export interface FinanceTransaction {
   accountCode: string;
   branchName: string;
   branchCode: string;
+  /** Empty when the voucher belongs to no tournament. */
+  tournamentCode: string;
+  tournamentName: string;
 }
 
 /** GET finance/transactions */
@@ -118,4 +123,74 @@ export interface FinanceOptionsData {
   categories: Array<
     Pick<FinanceCategory, 'id' | 'code' | 'name' | 'type' | 'sort'>
   >;
+  /** Tournaments a voucher may still be linked to: every one that is not settled. */
+  tournaments: Array<
+    Pick<FinanceTournament, 'id' | 'code' | 'name' | 'branchId' | 'status'>
+  >;
+}
+
+// Tournament finance (phase 3): server/finance/tournaments.ts; tests/server/finance-tournaments-api.test.ts asserts
+// these shapes against a real application.
+
+export type TournamentStatus = 'planning' | 'ongoing' | 'closed';
+
+export interface FinanceTournament {
+  id: string;
+  /** GD-YYYY-NN */
+  code: string;
+  name: string;
+  /** YYYY-MM-DD */
+  startDate: string;
+  endDate: string | null;
+  branchId: string | null;
+  venue: string | null;
+  status: TournamentStatus;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** GET finance/tournaments */
+export interface FinanceTournamentSummary extends FinanceTournament {
+  /** Null when no branch hosts it. */
+  branchName: string | null;
+  totalIncome: number;
+  totalExpense: number;
+  /** totalIncome - totalExpense */
+  net: number;
+  budgetIncome: number;
+  budgetExpense: number;
+  voucherCount: number;
+}
+
+export interface FinanceTournamentCategoryLine {
+  categoryId: string;
+  categoryCode: string;
+  categoryName: string;
+  type: TransactionType;
+  budget: number;
+  actual: number;
+  /** actual - budget */
+  variance: number;
+  /** An expense line spent above its budget. */
+  overBudget: boolean;
+}
+
+/** GET finance/tournaments/:id */
+export interface FinanceTournamentReport {
+  tournament: FinanceTournament & { branchName: string | null };
+  totals: {
+    totalIncome: number;
+    totalExpense: number;
+    net: number;
+    budgetIncome: number;
+    budgetExpense: number;
+    budgetNet: number;
+    /** Whole percentage of the expense budget spent; null without an expense budget. */
+    expenseRatio: number | null;
+    voucherCount: number;
+  };
+  /** Every category with a budget or a voucher: income first, then expense, in dictionary order. */
+  categories: FinanceTournamentCategoryLine[];
+  vouchers: FinanceTransaction[];
 }

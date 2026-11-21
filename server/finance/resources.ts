@@ -49,9 +49,31 @@ export interface FinTransaction {
   branchId: string | null;
   counterparty: string | null;
   description: string | null;
+  /** The tournament the voucher belongs to (phase 3), if any. */
+  tournamentId: string | null;
   createdById: string;
   createdAt: Date | string;
   updatedAt: Date | string;
+}
+export type TournamentStatus = 'planning' | 'ongoing' | 'closed';
+export interface FinTournament {
+  id: string;
+  code: string;
+  name: string;
+  startDate: string | Date;
+  endDate: string | Date | null;
+  branchId: string | null;
+  venue: string | null;
+  status: TournamentStatus;
+  note: string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+export interface FinTournamentBudget {
+  id: string;
+  tournamentId: string;
+  categoryId: string;
+  amount: number | string;
 }
 
 // Titles are translation keys in the application's namespace (its package name); see client/locales.
@@ -92,6 +114,7 @@ const transactionFields = [
   'branchId',
   'counterparty',
   'description',
+  'tournamentId',
   'createdById',
   'createdAt',
   'updatedAt',
@@ -107,6 +130,7 @@ const transactionEditable = [
   'branchId',
   'counterparty',
   'description',
+  'tournamentId',
   'updatedAt',
 ] as const;
 
@@ -131,6 +155,48 @@ const categoryData = defineDatabasePermission((p) =>
     .collection<FinCategory>('finCategories')
     .title(title('categories', 'Categories'))
     .read([...categoryFields])
+    .options(recordAccess.allRecords)
+    .default(recordAccess.allRecords),
+);
+const tournamentFields = [
+  'id',
+  'code',
+  'name',
+  'startDate',
+  'endDate',
+  'branchId',
+  'venue',
+  'status',
+  'note',
+  'createdAt',
+  'updatedAt',
+] as const;
+// The code is allocated once; everything else, the status included, is edited through manage.
+const tournamentEditable = [
+  'name',
+  'startDate',
+  'endDate',
+  'branchId',
+  'venue',
+  'status',
+  'note',
+  'updatedAt',
+] as const;
+const budgetFields = ['id', 'tournamentId', 'categoryId', 'amount'] as const;
+
+const tournamentData = defineDatabasePermission((p) =>
+  p
+    .collection<FinTournament>('finTournaments')
+    .title(title('tournaments', 'Tournaments'))
+    .read([...tournamentFields])
+    .options(recordAccess.allRecords)
+    .default(recordAccess.allRecords),
+);
+const budgetData = defineDatabasePermission((p) =>
+  p
+    .collection<FinTournamentBudget>('finTournamentBudgets')
+    .title(title('tournamentBudgets', 'Tournament budgets'))
+    .read([...budgetFields])
     .options(recordAccess.allRecords)
     .default(recordAccess.allRecords),
 );
@@ -228,14 +294,54 @@ export const branches = defineCompositeResource('finance.branches', (r) =>
 );
 
 export const reports = defineCompositeResource('finance.reports', (r) =>
-  r.title(title('reports', 'Financial overview')).action('view', (a) =>
-    a
-      .title(title('view', 'View'))
-      .grant('finTransactions', transactionData)
-      .grant('finCategories', categoryData)
-      .grant('finAccounts', accountData)
-      .grant('finBranches', branchData),
-  ),
+  r
+    .title(title('reports', 'Financial overview'))
+    .action('view', (a) =>
+      a
+        .title(title('view', 'View'))
+        .grant('finTransactions', transactionData)
+        .grant('finCategories', categoryData)
+        .grant('finAccounts', accountData)
+        .grant('finBranches', branchData),
+    ),
+);
+
+// Tournament finance (phase 3). Vouchers linked to a tournament are still created under finance.transactions; these
+// actions cover the tournament itself, its budget and its report.
+export const tournaments = defineCompositeResource('finance.tournaments', (r) =>
+  r
+    .title(title('tournaments', 'Tournaments'))
+    // The report shows budget against the actual vouchers, with their category, account and branch names.
+    .action('view', (a) =>
+      a
+        .title(title('view', 'View'))
+        .grant('finTournaments', tournamentData)
+        .grant('finTournamentBudgets', budgetData)
+        .grant('finTransactions', transactionData)
+        .grant('finCategories', categoryData)
+        .grant('finAccounts', accountData)
+        .grant('finBranches', branchData),
+    )
+    // Create and edit tournaments, replace their budget, settle (close) and reopen them.
+    .action('manage', (a) =>
+      a
+        .title(title('manageTournaments', 'Create, budget and settle'))
+        .grant(
+          'finTournaments',
+          tournamentData
+            .create([...tournamentFields])
+            .update([...tournamentEditable]),
+        )
+        .grant(
+          'finTournamentBudgets',
+          budgetData
+            .create([...budgetFields])
+            .update(['amount'])
+            .delete(),
+        )
+        .grant('finCategories', categoryData)
+        .grant('finBranches', branchData),
+    ),
 );
 
 /** The settings item behind System settings → Income and expense categories. */
@@ -246,4 +352,9 @@ export const financeCollections = [
   { name: 'finAccounts', title: title('accounts', 'Fund accounts') },
   { name: 'finCategories', title: title('categories', 'Categories') },
   { name: 'finTransactions', title: title('transactions', 'Vouchers') },
+  { name: 'finTournaments', title: title('tournaments', 'Tournaments') },
+  {
+    name: 'finTournamentBudgets',
+    title: title('tournamentBudgets', 'Tournament budgets'),
+  },
 ] as const;

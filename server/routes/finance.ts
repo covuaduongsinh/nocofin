@@ -14,9 +14,10 @@ import {
   dataResponse,
   defineApiRoutes,
   describeRoute,
+  executeIdempotentMutation,
   type AppApiRouteContribution,
 } from '@nocobase/app-server/router';
-import { databaseManagerToken } from '@nocobase/db';
+import { databaseManagerToken, type DatabaseConnection } from '@nocobase/db';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 
@@ -26,22 +27,33 @@ export type FinanceRouteEnv = {
 
 import { categoriesSetting } from '../finance/resources.js';
 import { FinanceService } from '../finance/service.js';
+import {
+  TournamentService,
+  tournamentStatuses,
+} from '../finance/tournaments.js';
 
 // Zod schemas for input validation
 const OverviewQuerySchema = z.object({
-  period: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  period: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/)
+    .optional(),
   branchId: z.string().optional(),
 });
 
 const ListTransactionsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().optional(),
-  period: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  period: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/)
+    .optional(),
   branchId: z.string().optional(),
   accountId: z.string().optional(),
   categoryId: z.string().optional(),
   type: z.enum(['income', 'expense']).optional(),
   search: z.string().optional(),
+  tournamentId: z.string().optional(),
 });
 
 const CreateTransactionSchema = z.object({
@@ -53,16 +65,21 @@ const CreateTransactionSchema = z.object({
   branchId: z.string().nullable().optional(),
   counterparty: z.string().max(200).nullable().optional(),
   description: z.string().max(1000).nullable().optional(),
+  tournamentId: z.string().nullable().optional(),
 });
 
 const UpdateTransactionSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   amount: z.coerce.number().positive().optional(),
   categoryId: z.string().min(1).optional(),
   accountId: z.string().min(1).optional(),
   branchId: z.string().nullable().optional(),
   counterparty: z.string().max(200).nullable().optional(),
   description: z.string().max(1000).nullable().optional(),
+  tournamentId: z.string().nullable().optional(),
 });
 
 const CreateAccountSchema = z.object({
@@ -116,6 +133,42 @@ const UpdateCategorySchema = z.object({
   active: z.boolean().optional(),
 });
 
+const calendarDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+const ListTournamentsQuerySchema = z.object({
+  status: z.enum(tournamentStatuses).optional(),
+});
+
+const CreateTournamentSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  startDate: calendarDate,
+  endDate: calendarDate.nullable().optional(),
+  branchId: z.string().nullable().optional(),
+  venue: z.string().max(200).nullable().optional(),
+  status: z.enum(tournamentStatuses).optional(),
+  note: z.string().max(1000).nullable().optional(),
+});
+
+const UpdateTournamentSchema = CreateTournamentSchema.partial();
+
+const SaveBudgetsSchema = z.object({
+  budgets: z
+    .array(
+      z.object({
+        categoryId: z.string().min(1),
+        amount: z.coerce.number().int().min(0),
+      }),
+    )
+    .max(200),
+});
+
+// Every finance write takes the operation key the client's submission controller sends (docs: references/
+// submission.md). The receipt and the business write share one transaction, so a double click, Enter plus click or a
+// retry after a lost response answers the first result instead of writing again.
+const IdempotencyHeaderSchema = z.object({
+  'idempotency-key': z.string().min(1),
+});
+
 export const financeRoutes: AppApiRouteContribution<Application> =
   defineApiRoutes((app) => {
     const router = new Hono();
@@ -124,7 +177,9 @@ export const financeRoutes: AppApiRouteContribution<Application> =
     const auth = app.container.resolve(authenticationToken);
     const authorization = app.container.resolve(authorizationToken);
     const db = app.container.resolve(databaseManagerToken);
-    const service = new FinanceService(db.connection());
+    const connection = db.connection();
+    const service = new FinanceService(connection);
+    const tournamentService = new TournamentService(connection);
 
     // Security: All finance routes require authentication and authorization context
     routes.use('*', auth.required(), authorization.middleware());
@@ -144,6 +199,66 @@ export const financeRoutes: AppApiRouteContribution<Application> =
           message: `Action ${action} on ${resource.id} is not permitted.`,
         });
       }
+    };
+
+    // auth.required() has run, so a session is present; the check keeps the type honest.
+    const userIdOf = (c: Context<FinanceRouteEnv>) => {
+      const id = c.get('auth')?.user.id;
+      if (!id)
+        throw new ApiError({
+          status: 'UNAUTHENTICATED',
+          reason: 'FINANCE_SESSION_REQUIRED',
+          domain: 'finance',
+          message: 'Sign in to change finance records.',
+        });
+      return id;
+    };
+
+    type Resource = { type: 'composite' | 'settings'; id: string };
+    const guard =
+      (
+        c: Context<FinanceRouteEnv>,
+        resource: Resource,
+        action: string,
+        reason: string,
+      ) =>
+      () =>
+        assertCan(c, resource, action, reason);
+
+    /**
+     * Runs a write once per operation key: the permission is checked on every attempt, replays answer the stored
+     * result with `Idempotency-Replayed: true`, and `execute` must write only through the transaction it is given.
+     */
+    const mutate = async <T>(
+      c: Context<FinanceRouteEnv>,
+      options: {
+        operation: string;
+        input: unknown;
+        authorize: () => Promise<void>;
+        authorizeReplay: () => Promise<void>;
+        execute: (transaction: DatabaseConnection) => Promise<T>;
+      },
+    ) => {
+      const key = c.req.header('idempotency-key');
+      if (!key)
+        throw new ApiError({
+          status: 'INVALID_ARGUMENT',
+          reason: 'IDEMPOTENCY_KEY_REQUIRED',
+          domain: 'finance',
+          message: 'Finance writes require an Idempotency-Key header.',
+        });
+      const result = await executeIdempotentMutation({
+        connection,
+        key,
+        principal: `${app.appName}:${userIdOf(c)}`,
+        operation: `finance/${options.operation}`,
+        input: options.input,
+        authorize: options.authorize,
+        authorizeReplay: options.authorizeReplay,
+        execute: options.execute,
+      });
+      c.header('Idempotency-Replayed', String(result.replayed));
+      return c.json({ data: result.data });
     };
 
     // 1. Overview Reports
@@ -240,19 +355,32 @@ export const financeRoutes: AppApiRouteContribution<Application> =
         operationId: 'createFinanceTransaction',
         responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
       }),
+      apiValidator('header', IdempotencyHeaderSchema),
       apiValidator('json', CreateTransactionSchema),
       async (c) => {
-        await assertCan(
-          c,
-          { type: 'composite', id: 'finance.transactions' },
-          'create',
-          'FINANCE_TRANSACTIONS_CREATE_DENIED',
-        );
-        const session = c.get('auth');
-        const userId = session?.user?.id ?? 'anonymous';
+        const resource = {
+          type: 'composite',
+          id: 'finance.transactions',
+        } as const;
+        const userId = userIdOf(c);
         const body = c.req.valid('json');
-        const data = await service.createTransaction(body, userId);
-        return c.json({ data });
+        return mutate(c, {
+          operation: 'transactions/create',
+          input: body,
+          authorize: guard(
+            c,
+            resource,
+            'create',
+            'FINANCE_TRANSACTIONS_CREATE_DENIED',
+          ),
+          authorizeReplay: guard(
+            c,
+            resource,
+            'view',
+            'FINANCE_TRANSACTIONS_VIEW_DENIED',
+          ),
+          execute: (trx) => service.createTransaction(body, userId, trx),
+        });
       },
     );
 
@@ -265,18 +393,32 @@ export const financeRoutes: AppApiRouteContribution<Application> =
         responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
       }),
       apiValidator('param', z.object({ id: z.string() })),
+      apiValidator('header', IdempotencyHeaderSchema),
       apiValidator('json', UpdateTransactionSchema),
       async (c) => {
-        await assertCan(
-          c,
-          { type: 'composite', id: 'finance.transactions' },
-          'update',
-          'FINANCE_TRANSACTIONS_UPDATE_DENIED',
-        );
+        const resource = {
+          type: 'composite',
+          id: 'finance.transactions',
+        } as const;
         const { id } = c.req.valid('param');
         const body = c.req.valid('json');
-        const data = await service.updateTransaction(id, body);
-        return c.json({ data });
+        return mutate(c, {
+          operation: `transactions/${id}/update`,
+          input: body,
+          authorize: guard(
+            c,
+            resource,
+            'update',
+            'FINANCE_TRANSACTIONS_UPDATE_DENIED',
+          ),
+          authorizeReplay: guard(
+            c,
+            resource,
+            'view',
+            'FINANCE_TRANSACTIONS_VIEW_DENIED',
+          ),
+          execute: (trx) => service.updateTransaction(id, body, trx),
+        });
       },
     );
 
@@ -331,17 +473,28 @@ export const financeRoutes: AppApiRouteContribution<Application> =
         operationId: 'createFinanceAccount',
         responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
       }),
+      apiValidator('header', IdempotencyHeaderSchema),
       apiValidator('json', CreateAccountSchema),
       async (c) => {
-        await assertCan(
-          c,
-          { type: 'composite', id: 'finance.accounts' },
-          'manage',
-          'FINANCE_ACCOUNTS_MANAGE_DENIED',
-        );
+        const resource = { type: 'composite', id: 'finance.accounts' } as const;
         const body = c.req.valid('json');
-        const data = await service.createAccount(body);
-        return c.json({ data });
+        return mutate(c, {
+          operation: 'accounts/create',
+          input: body,
+          authorize: guard(
+            c,
+            resource,
+            'manage',
+            'FINANCE_ACCOUNTS_MANAGE_DENIED',
+          ),
+          authorizeReplay: guard(
+            c,
+            resource,
+            'view',
+            'FINANCE_ACCOUNTS_VIEW_DENIED',
+          ),
+          execute: (trx) => service.createAccount(body, trx),
+        });
       },
     );
 
@@ -354,18 +507,29 @@ export const financeRoutes: AppApiRouteContribution<Application> =
         responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
       }),
       apiValidator('param', z.object({ id: z.string() })),
+      apiValidator('header', IdempotencyHeaderSchema),
       apiValidator('json', UpdateAccountSchema),
       async (c) => {
-        await assertCan(
-          c,
-          { type: 'composite', id: 'finance.accounts' },
-          'manage',
-          'FINANCE_ACCOUNTS_MANAGE_DENIED',
-        );
+        const resource = { type: 'composite', id: 'finance.accounts' } as const;
         const { id } = c.req.valid('param');
         const body = c.req.valid('json');
-        const data = await service.updateAccount(id, body);
-        return c.json({ data });
+        return mutate(c, {
+          operation: `accounts/${id}/update`,
+          input: body,
+          authorize: guard(
+            c,
+            resource,
+            'manage',
+            'FINANCE_ACCOUNTS_MANAGE_DENIED',
+          ),
+          authorizeReplay: guard(
+            c,
+            resource,
+            'view',
+            'FINANCE_ACCOUNTS_VIEW_DENIED',
+          ),
+          execute: (trx) => service.updateAccount(id, body, trx),
+        });
       },
     );
 
@@ -398,17 +562,28 @@ export const financeRoutes: AppApiRouteContribution<Application> =
         operationId: 'createFinanceBranch',
         responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
       }),
+      apiValidator('header', IdempotencyHeaderSchema),
       apiValidator('json', CreateBranchSchema),
       async (c) => {
-        await assertCan(
-          c,
-          { type: 'composite', id: 'finance.branches' },
-          'manage',
-          'FINANCE_BRANCHES_MANAGE_DENIED',
-        );
+        const resource = { type: 'composite', id: 'finance.branches' } as const;
         const body = c.req.valid('json');
-        const data = await service.createBranch(body);
-        return c.json({ data });
+        return mutate(c, {
+          operation: 'branches/create',
+          input: body,
+          authorize: guard(
+            c,
+            resource,
+            'manage',
+            'FINANCE_BRANCHES_MANAGE_DENIED',
+          ),
+          authorizeReplay: guard(
+            c,
+            resource,
+            'view',
+            'FINANCE_BRANCHES_VIEW_DENIED',
+          ),
+          execute: (trx) => service.createBranch(body, trx),
+        });
       },
     );
 
@@ -421,18 +596,29 @@ export const financeRoutes: AppApiRouteContribution<Application> =
         responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
       }),
       apiValidator('param', z.object({ id: z.string() })),
+      apiValidator('header', IdempotencyHeaderSchema),
       apiValidator('json', UpdateBranchSchema),
       async (c) => {
-        await assertCan(
-          c,
-          { type: 'composite', id: 'finance.branches' },
-          'manage',
-          'FINANCE_BRANCHES_MANAGE_DENIED',
-        );
+        const resource = { type: 'composite', id: 'finance.branches' } as const;
         const { id } = c.req.valid('param');
         const body = c.req.valid('json');
-        const data = await service.updateBranch(id, body);
-        return c.json({ data });
+        return mutate(c, {
+          operation: `branches/${id}/update`,
+          input: body,
+          authorize: guard(
+            c,
+            resource,
+            'manage',
+            'FINANCE_BRANCHES_MANAGE_DENIED',
+          ),
+          authorizeReplay: guard(
+            c,
+            resource,
+            'view',
+            'FINANCE_BRANCHES_VIEW_DENIED',
+          ),
+          execute: (trx) => service.updateBranch(id, body, trx),
+        });
       },
     );
 
@@ -470,17 +656,28 @@ export const financeRoutes: AppApiRouteContribution<Application> =
         operationId: 'createFinanceCategory',
         responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
       }),
+      apiValidator('header', IdempotencyHeaderSchema),
       apiValidator('json', CreateCategorySchema),
       async (c) => {
-        await assertCan(
-          c,
-          { type: 'settings', id: categoriesSetting },
-          'create',
-          'FINANCE_CATEGORIES_CREATE_DENIED',
-        );
+        const resource = { type: 'settings', id: categoriesSetting } as const;
         const body = c.req.valid('json');
-        const data = await service.createCategory(body);
-        return c.json({ data });
+        return mutate(c, {
+          operation: 'categories/create',
+          input: body,
+          authorize: guard(
+            c,
+            resource,
+            'create',
+            'FINANCE_CATEGORIES_CREATE_DENIED',
+          ),
+          authorizeReplay: guard(
+            c,
+            resource,
+            'read',
+            'FINANCE_CATEGORIES_READ_DENIED',
+          ),
+          execute: (trx) => service.createCategory(body, trx),
+        });
       },
     );
 
@@ -493,18 +690,151 @@ export const financeRoutes: AppApiRouteContribution<Application> =
         responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
       }),
       apiValidator('param', z.object({ id: z.string() })),
+      apiValidator('header', IdempotencyHeaderSchema),
       apiValidator('json', UpdateCategorySchema),
       async (c) => {
-        await assertCan(
-          c,
-          { type: 'settings', id: categoriesSetting },
-          'update',
-          'FINANCE_CATEGORIES_UPDATE_DENIED',
-        );
+        const resource = { type: 'settings', id: categoriesSetting } as const;
         const { id } = c.req.valid('param');
         const body = c.req.valid('json');
-        const data = await service.updateCategory(id, body);
+        return mutate(c, {
+          operation: `categories/${id}/update`,
+          input: body,
+          authorize: guard(
+            c,
+            resource,
+            'update',
+            'FINANCE_CATEGORIES_UPDATE_DENIED',
+          ),
+          authorizeReplay: guard(
+            c,
+            resource,
+            'read',
+            'FINANCE_CATEGORIES_READ_DENIED',
+          ),
+          execute: (trx) => service.updateCategory(id, body, trx),
+        });
+      },
+    );
+
+    // 6. Tournaments (phase 3)
+    const tournamentsResource = {
+      type: 'composite',
+      id: 'finance.tournaments',
+    } as const;
+    const canViewTournaments = (c: Context<FinanceRouteEnv>) =>
+      guard(c, tournamentsResource, 'view', 'FINANCE_TOURNAMENTS_VIEW_DENIED');
+    const canManageTournaments = (c: Context<FinanceRouteEnv>) =>
+      guard(
+        c,
+        tournamentsResource,
+        'manage',
+        'FINANCE_TOURNAMENTS_MANAGE_DENIED',
+      );
+
+    routes.get(
+      '/tournaments',
+      describeRoute({
+        tags: ['Finance'],
+        summary: 'List tournaments with their receipts, payments and result',
+        operationId: 'listFinanceTournaments',
+        responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
+      }),
+      apiValidator('query', ListTournamentsQuerySchema),
+      async (c) => {
+        await canViewTournaments(c)();
+        const data = await tournamentService.listTournaments(
+          c.req.valid('query'),
+        );
         return c.json({ data });
+      },
+    );
+
+    routes.post(
+      '/tournaments',
+      describeRoute({
+        tags: ['Finance'],
+        summary: 'Create a tournament (its code GD-YYYY-NN is allocated)',
+        operationId: 'createFinanceTournament',
+        responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
+      }),
+      apiValidator('header', IdempotencyHeaderSchema),
+      apiValidator('json', CreateTournamentSchema),
+      async (c) => {
+        const body = c.req.valid('json');
+        return mutate(c, {
+          operation: 'tournaments/create',
+          input: body,
+          authorize: canManageTournaments(c),
+          authorizeReplay: canViewTournaments(c),
+          execute: (trx) => tournamentService.createTournament(body, trx),
+        });
+      },
+    );
+
+    routes.get(
+      '/tournaments/:id',
+      describeRoute({
+        tags: ['Finance'],
+        summary:
+          'Tournament report: details, budget against actual per category, totals and vouchers',
+        operationId: 'getFinanceTournament',
+        responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
+      }),
+      apiValidator('param', z.object({ id: z.string() })),
+      async (c) => {
+        await canViewTournaments(c)();
+        const { id } = c.req.valid('param');
+        const data = await tournamentService.getReport(id);
+        return c.json({ data });
+      },
+    );
+
+    routes.patch(
+      '/tournaments/:id',
+      describeRoute({
+        tags: ['Finance'],
+        summary: 'Update a tournament, change its status, settle or reopen it',
+        operationId: 'updateFinanceTournament',
+        responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
+      }),
+      apiValidator('param', z.object({ id: z.string() })),
+      apiValidator('header', IdempotencyHeaderSchema),
+      apiValidator('json', UpdateTournamentSchema),
+      async (c) => {
+        const { id } = c.req.valid('param');
+        const body = c.req.valid('json');
+        return mutate(c, {
+          operation: `tournaments/${id}/update`,
+          input: body,
+          authorize: canManageTournaments(c),
+          authorizeReplay: canViewTournaments(c),
+          execute: (trx) => tournamentService.updateTournament(id, body, trx),
+        });
+      },
+    );
+
+    routes.put(
+      '/tournaments/:id/budgets',
+      describeRoute({
+        tags: ['Finance'],
+        summary: 'Replace the whole budget of a tournament',
+        operationId: 'saveFinanceTournamentBudgets',
+        responses: { 200: dataResponse(z.unknown()), ...apiErrorResponses },
+      }),
+      apiValidator('param', z.object({ id: z.string() })),
+      apiValidator('header', IdempotencyHeaderSchema),
+      apiValidator('json', SaveBudgetsSchema),
+      async (c) => {
+        const { id } = c.req.valid('param');
+        const body = c.req.valid('json');
+        return mutate(c, {
+          operation: `tournaments/${id}/budgets`,
+          input: body,
+          authorize: canManageTournaments(c),
+          authorizeReplay: canViewTournaments(c),
+          execute: (trx) =>
+            tournamentService.saveBudgets(id, body.budgets, trx),
+        });
       },
     );
 

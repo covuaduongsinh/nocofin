@@ -22,6 +22,7 @@ export interface ListTransactionsQuery {
   categoryId?: string;
   type?: 'income' | 'expense';
   search?: string;
+  tournamentId?: string;
 }
 
 export interface CreateTransactionInput {
@@ -33,6 +34,7 @@ export interface CreateTransactionInput {
   branchId?: string | null;
   counterparty?: string | null;
   description?: string | null;
+  tournamentId?: string | null;
 }
 
 export interface UpdateTransactionInput {
@@ -43,20 +45,21 @@ export interface UpdateTransactionInput {
   branchId?: string | null;
   counterparty?: string | null;
   description?: string | null;
+  tournamentId?: string | null;
 }
 
 // Drivers differ in what they return for the same columns: SQLite answers booleans as 0/1, and Postgres answers
 // bigint as a string and a DATE column as a Date at local midnight. The HTTP contract the client reads
 // (client/pages/finance/types.ts) is booleans, numbers and YYYY-MM-DD strings on every dialect, so rows are normalized
 // here before they leave the service.
-const toBoolean = (value: unknown): boolean =>
+export const toBoolean = (value: unknown): boolean =>
   value === true ||
   value === 1 ||
   value === '1' ||
   value === 't' ||
   value === 'true';
 
-const toCalendarDate = (value: unknown): string => {
+export const toCalendarDate = (value: unknown): string => {
   if (value instanceof Date) {
     // The driver built this Date at local midnight; toISOString() would shift it a day east of UTC.
     const y = value.getFullYear();
@@ -80,24 +83,41 @@ const normalizeCategory = <T extends { active: unknown; sort: unknown }>(
   active: toBoolean(row.active),
 });
 
-const normalizeTransaction = <T extends { amount: unknown; date: unknown }>(
+export const normalizeTransaction = <
+  T extends { amount: unknown; date: unknown },
+>(
   row: T,
 ) => ({
   ...row,
   amount: Number(row.amount),
   date: toCalendarDate(row.date),
+  tournamentId: (row as { tournamentId?: string | null }).tournamentId ?? null,
 });
+
+/** A voucher of a settled tournament is part of its final account and may no longer change. */
+export const tournamentClosedError = (field = 'tournamentId') =>
+  new ApiError({
+    status: 'FAILED_PRECONDITION',
+    reason: 'FINANCE_TOURNAMENT_CLOSED',
+    domain: 'finance',
+    message:
+      'The tournament is settled (closed); reopen it before changing its vouchers or budget.',
+    fieldViolations: [
+      { field, description: 'The tournament is settled (closed).' },
+    ],
+  });
 
 interface VoucherReferences {
   type: string;
   categoryId?: string;
   accountId?: string;
   branchId?: string | null;
+  tournamentId?: string | null;
 }
 
 /**
  * A voucher may only name an existing, active category of its own type, an existing active account and, when it has
- * one, an existing active branch. Checked here rather than left to the foreign keys, which answer an unknown id with a
+ * one, an existing active branch and an existing tournament that is not settled. Checked here rather than left to the foreign keys, which answer an unknown id with a
  * 500 and accept inactive or wrongly typed references.
  */
 async function assertVoucherReferences(
@@ -146,16 +166,111 @@ async function assertVoucherReferences(
         description: 'Must name an active branch.',
       });
   }
+  if (refs.tournamentId) {
+    const tournament = await connection.query
+      .selectFrom('finTournaments')
+      .select(['status'])
+      .where('id', '=', refs.tournamentId)
+      .executeTakeFirst<{ status: string }>();
+    if (!tournament)
+      violations.push({
+        field: 'tournamentId',
+        description: 'Must name an existing tournament.',
+      });
+    else if (tournament.status === 'closed')
+      violations.push({
+        field: 'tournamentId',
+        description: 'Must name a tournament that is not settled (closed).',
+      });
+  }
   if (violations.length > 0) {
     throw new ApiError({
       status: 'INVALID_ARGUMENT',
       reason: 'FINANCE_VOUCHER_REFERENCE_INVALID',
       domain: 'finance',
       message:
-        'The voucher names a missing or inactive category, account or branch.',
+        'The voucher names a missing or inactive category, account, branch or tournament, or a settled tournament.',
       fieldViolations: violations,
     });
   }
+}
+
+/** Rejects a change to the vouchers or budget of a settled tournament. */
+export async function assertTournamentOpen(
+  connection: DatabaseConnection,
+  tournamentId: string | null | undefined,
+  field = 'tournamentId',
+): Promise<void> {
+  if (!tournamentId) return;
+  const tournament = await connection.query
+    .selectFrom('finTournaments')
+    .select(['status'])
+    .where('id', '=', tournamentId)
+    .executeTakeFirst<{ status: string }>();
+  if (tournament?.status === 'closed') throw tournamentClosedError(field);
+}
+
+/** Adds the names of each voucher's category, account and branch, as the list and the tournament report show them. */
+export async function enrichTransactions(
+  connection: DatabaseConnection,
+  rows: FinTransaction[],
+) {
+  const categories = await connection.query
+    .selectFrom('finCategories')
+    .select(['id', 'code', 'name', 'type'])
+    .execute<{
+      id: string;
+      code: string;
+      name: string;
+      type: string;
+    }>();
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+
+  const accounts = await connection.query
+    .selectFrom('finAccounts')
+    .select(['id', 'code', 'name'])
+    .execute<{ id: string; code: string; name: string }>();
+  const accMap = new Map(accounts.map((a) => [a.id, a]));
+
+  const branches = await connection.query
+    .selectFrom('finBranches')
+    .select(['id', 'code', 'name'])
+    .execute<{ id: string; code: string; name: string }>();
+  const branchMap = new Map(branches.map((b) => [b.id, b]));
+
+  const tournamentIds = [
+    ...new Set(rows.map((r) => r.tournamentId).filter(Boolean)),
+  ] as string[];
+  const tournaments =
+    tournamentIds.length === 0
+      ? []
+      : await connection.query
+          .selectFrom('finTournaments')
+          .select(['id', 'code', 'name'])
+          .where('id', 'in', tournamentIds)
+          .execute<{ id: string; code: string; name: string }>();
+  const tournamentMap = new Map(tournaments.map((t) => [t.id, t]));
+
+  return rows.map((r) => {
+    const cat = catMap.get(r.categoryId);
+    const acc = accMap.get(r.accountId);
+    const branch = r.branchId ? branchMap.get(r.branchId) : null;
+    return {
+      ...normalizeTransaction(r),
+      categoryName: cat?.name ?? '',
+      categoryCode: cat?.code ?? '',
+      accountName: acc?.name ?? '',
+      accountCode: acc?.code ?? '',
+      branchName: branch?.name ?? (r.branchId ? '' : 'Chung (Toàn công ty)'),
+      branchCode: branch?.code ?? '',
+      tournamentCode: r.tournamentId
+        ? (tournamentMap.get(r.tournamentId)?.code ?? '')
+        : '',
+      tournamentName: r.tournamentId
+        ? (tournamentMap.get(r.tournamentId)?.name ?? '')
+        : '',
+    };
+  });
 }
 
 export class FinanceService {
@@ -393,6 +508,9 @@ export class FinanceService {
     if (query.type) {
       baseQuery = baseQuery.where('type', '=', query.type);
     }
+    if (query.tournamentId) {
+      baseQuery = baseQuery.where('tournamentId', '=', query.tournamentId);
+    }
     if (query.search) {
       const term = `%${query.search.trim()}%`;
       baseQuery = baseQuery.where((eb) =>
@@ -419,51 +537,7 @@ export class FinanceService {
       .offset(offset)
       .execute<FinTransaction>();
 
-    // Enrich with names
-    const categories = await this.connection.query
-      .selectFrom('finCategories')
-      .select(['id', 'code', 'name', 'type'])
-      .execute<{
-        id: string;
-        code: string;
-        name: string;
-        type: string;
-      }>();
-    const catMap = new Map(categories.map((c) => [c.id, c]));
-
-    const accounts = await this.connection.query
-      .selectFrom('finAccounts')
-      .select(['id', 'code', 'name', 'kind', 'bankName', 'accountNumber'])
-      .execute<{
-        id: string;
-        code: string;
-        name: string;
-        kind: string;
-        bankName: string | null;
-        accountNumber: string | null;
-      }>();
-    const accMap = new Map(accounts.map((a) => [a.id, a]));
-
-    const branches = await this.connection.query
-      .selectFrom('finBranches')
-      .select(['id', 'code', 'name'])
-      .execute<{ id: string; code: string; name: string }>();
-    const branchMap = new Map(branches.map((b) => [b.id, b]));
-
-    const enrichedRows = rows.map((r) => {
-      const cat = catMap.get(r.categoryId);
-      const acc = accMap.get(r.accountId);
-      const branch = r.branchId ? branchMap.get(r.branchId) : null;
-      return {
-        ...normalizeTransaction(r),
-        categoryName: cat?.name ?? '',
-        categoryCode: cat?.code ?? '',
-        accountName: acc?.name ?? '',
-        accountCode: acc?.code ?? '',
-        branchName: branch?.name ?? (r.branchId ? '' : 'Chung (Toàn công ty)'),
-        branchCode: branch?.code ?? '',
-      };
-    });
+    const enrichedRows = await enrichTransactions(this.connection, rows);
 
     return {
       rows: enrichedRows,
@@ -477,7 +551,11 @@ export class FinanceService {
    * Create transaction voucher with atomic counter code:
    * PT-YYYY-0001 (Income) or PC-YYYY-0001 (Expense)
    */
-  async createTransaction(input: CreateTransactionInput, userId: string) {
+  async createTransaction(
+    input: CreateTransactionInput,
+    userId: string,
+    db: DatabaseConnection = this.connection,
+  ) {
     // The year is read from the YYYY-MM-DD text: new Date(text) is UTC midnight, a different year west of UTC on 1 Jan.
     const year = input.date.slice(0, 4);
     const prefix = input.type === 'income' ? 'PT' : 'PC';
@@ -487,12 +565,13 @@ export class FinanceService {
 
     // References, the voucher number and the voucher are one transaction: a rejected or failed insert must not consume
     // a number from the counter.
-    return this.connection.transaction(async (trx) => {
+    return db.transaction(async (trx) => {
       await assertVoucherReferences(trx, {
         type: input.type,
         categoryId: input.categoryId,
         accountId: input.accountId,
         branchId: input.branchId ?? null,
+        tournamentId: input.tournamentId ?? null,
       });
 
       const existing = await trx.query
@@ -529,6 +608,7 @@ export class FinanceService {
         branchId: input.branchId || null,
         counterparty: input.counterparty || null,
         description: input.description || null,
+        tournamentId: input.tournamentId || null,
         createdById: userId,
         createdAt: now,
         updatedAt: now,
@@ -543,75 +623,97 @@ export class FinanceService {
   /**
    * Update transaction
    */
-  async updateTransaction(id: string, input: UpdateTransactionInput) {
-    const existing = await this.connection.query
-      .selectFrom('finTransactions')
-      .selectAll()
-      .where('id', '=', id)
-      .executeTakeFirst();
+  async updateTransaction(
+    id: string,
+    input: UpdateTransactionInput,
+    db: DatabaseConnection = this.connection,
+  ) {
+    return db.transaction(async (trx) => {
+      const existing = await trx.query
+        .selectFrom('finTransactions')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirst();
 
-    if (!existing) {
-      throw new ApiError({
-        status: 'NOT_FOUND',
-        reason: 'FINANCE_TRANSACTION_NOT_FOUND',
-        domain: 'finance',
-        message: `Transaction ${id} was not found.`,
+      if (!existing) {
+        throw new ApiError({
+          status: 'NOT_FOUND',
+          reason: 'FINANCE_TRANSACTION_NOT_FOUND',
+          domain: 'finance',
+          message: `Transaction ${id} was not found.`,
+        });
+      }
+      const current = existing as unknown as FinTransaction;
+      // A voucher already in a settled tournament is part of its final account: it cannot be edited or moved out.
+      await assertTournamentOpen(trx, current.tournamentId);
+      // Only references the edit changes are checked, so a voucher whose category or account was retired later can
+      // still be corrected in its other fields.
+      const changed = (
+        field: 'categoryId' | 'accountId' | 'branchId' | 'tournamentId',
+      ) =>
+        input[field] !== undefined &&
+        (input[field] || null) !== (current[field] ?? null)
+          ? (input[field] ?? null)
+          : undefined;
+      await assertVoucherReferences(trx, {
+        type: current.type,
+        categoryId: changed('categoryId') ?? undefined,
+        accountId: changed('accountId') ?? undefined,
+        branchId: changed('branchId'),
+        tournamentId: changed('tournamentId'),
       });
-    }
-    const current = existing as unknown as FinTransaction;
-    // Only references the edit changes are checked, so a voucher whose category or account was retired later can still
-    // be corrected in its other fields.
-    const changed = (field: 'categoryId' | 'accountId' | 'branchId') =>
-      input[field] !== undefined && (input[field] || null) !== current[field]
-        ? (input[field] ?? null)
-        : undefined;
-    await assertVoucherReferences(this.connection, {
-      type: current.type,
-      categoryId: changed('categoryId') ?? undefined,
-      accountId: changed('accountId') ?? undefined,
-      branchId: changed('branchId'),
+
+      const updates: Record<string, unknown> = {
+        updatedAt: new Date(),
+      };
+
+      if (input.date !== undefined) {
+        updates.date = input.date;
+        updates.period = input.date.slice(0, 7);
+      }
+      if (input.amount !== undefined) {
+        updates.amount = Math.round(Number(input.amount));
+      }
+      if (input.categoryId !== undefined) {
+        updates.categoryId = input.categoryId;
+      }
+      if (input.accountId !== undefined) {
+        updates.accountId = input.accountId;
+      }
+      if (input.branchId !== undefined) {
+        updates.branchId = input.branchId || null;
+      }
+      if (input.counterparty !== undefined) {
+        updates.counterparty = input.counterparty || null;
+      }
+      if (input.description !== undefined) {
+        updates.description = input.description || null;
+      }
+      if (input.tournamentId !== undefined) {
+        updates.tournamentId = input.tournamentId || null;
+      }
+
+      await trx.query
+        .updateTable('finTransactions')
+        .set(updates)
+        .where('id', '=', id)
+        .execute();
+
+      return normalizeTransaction({ ...current, ...updates });
     });
-
-    const updates: Record<string, unknown> = {
-      updatedAt: new Date(),
-    };
-
-    if (input.date !== undefined) {
-      updates.date = input.date;
-      updates.period = input.date.slice(0, 7);
-    }
-    if (input.amount !== undefined) {
-      updates.amount = Math.round(Number(input.amount));
-    }
-    if (input.categoryId !== undefined) {
-      updates.categoryId = input.categoryId;
-    }
-    if (input.accountId !== undefined) {
-      updates.accountId = input.accountId;
-    }
-    if (input.branchId !== undefined) {
-      updates.branchId = input.branchId || null;
-    }
-    if (input.counterparty !== undefined) {
-      updates.counterparty = input.counterparty || null;
-    }
-    if (input.description !== undefined) {
-      updates.description = input.description || null;
-    }
-
-    await this.connection.query
-      .updateTable('finTransactions')
-      .set(updates)
-      .where('id', '=', id)
-      .execute();
-
-    return normalizeTransaction({ ...current, ...updates });
   }
 
   /**
    * Delete transaction
    */
   async deleteTransaction(id: string) {
+    const existing = await this.connection.query
+      .selectFrom('finTransactions')
+      .select(['tournamentId'])
+      .where('id', '=', id)
+      .executeTakeFirst<{ tournamentId: string | null }>();
+    // Deleting a voucher of a settled tournament would change its final account as much as editing it.
+    await assertTournamentOpen(this.connection, existing?.tournamentId);
     await this.connection.query
       .deleteFrom('finTransactions')
       .where('id', '=', id)
@@ -662,16 +764,19 @@ export class FinanceService {
     });
   }
 
-  async createAccount(input: {
-    code: string;
-    name: string;
-    kind: string;
-    bankName?: string | null;
-    accountNumber?: string | null;
-    openingBalance?: number;
-    active?: boolean;
-    note?: string | null;
-  }) {
+  async createAccount(
+    input: {
+      code: string;
+      name: string;
+      kind: string;
+      bankName?: string | null;
+      accountNumber?: string | null;
+      openingBalance?: number;
+      active?: boolean;
+      note?: string | null;
+    },
+    db: DatabaseConnection = this.connection,
+  ) {
     const id = randomUUID();
     const record = {
       id,
@@ -684,10 +789,7 @@ export class FinanceService {
       active: input.active !== false,
       note: input.note?.trim() || null,
     };
-    await this.connection.query
-      .insertInto('finAccounts')
-      .values(record)
-      .execute();
+    await db.query.insertInto('finAccounts').values(record).execute();
     return record;
   }
 
@@ -702,6 +804,7 @@ export class FinanceService {
       active?: boolean;
       note?: string | null;
     },
+    db: DatabaseConnection = this.connection,
   ) {
     const updates: Record<string, unknown> = {};
     if (input.name !== undefined) updates.name = input.name.trim();
@@ -715,7 +818,7 @@ export class FinanceService {
     if (input.active !== undefined) updates.active = Boolean(input.active);
     if (input.note !== undefined) updates.note = input.note?.trim() || null;
 
-    await this.connection.query
+    await db.query
       .updateTable('finAccounts')
       .set(updates)
       .where('id', '=', id)
@@ -736,13 +839,16 @@ export class FinanceService {
     return rows.map(normalizeBranch);
   }
 
-  async createBranch(input: {
-    code: string;
-    name: string;
-    kind: string;
-    active?: boolean;
-    note?: string | null;
-  }) {
+  async createBranch(
+    input: {
+      code: string;
+      name: string;
+      kind: string;
+      active?: boolean;
+      note?: string | null;
+    },
+    db: DatabaseConnection = this.connection,
+  ) {
     const id = randomUUID();
     const record = {
       id,
@@ -752,10 +858,7 @@ export class FinanceService {
       active: input.active !== false,
       note: input.note?.trim() || null,
     };
-    await this.connection.query
-      .insertInto('finBranches')
-      .values(record)
-      .execute();
+    await db.query.insertInto('finBranches').values(record).execute();
     return record;
   }
 
@@ -767,6 +870,7 @@ export class FinanceService {
       active?: boolean;
       note?: string | null;
     },
+    db: DatabaseConnection = this.connection,
   ) {
     const updates: Record<string, unknown> = {};
     if (input.name !== undefined) updates.name = input.name.trim();
@@ -774,7 +878,7 @@ export class FinanceService {
     if (input.active !== undefined) updates.active = Boolean(input.active);
     if (input.note !== undefined) updates.note = input.note?.trim() || null;
 
-    await this.connection.query
+    await db.query
       .updateTable('finBranches')
       .set(updates)
       .where('id', '=', id)
@@ -798,13 +902,16 @@ export class FinanceService {
     return rows.map(normalizeCategory);
   }
 
-  async createCategory(input: {
-    code: string;
-    name: string;
-    type: string;
-    sort?: number;
-    active?: boolean;
-  }) {
+  async createCategory(
+    input: {
+      code: string;
+      name: string;
+      type: string;
+      sort?: number;
+      active?: boolean;
+    },
+    db: DatabaseConnection = this.connection,
+  ) {
     const id = randomUUID();
     const record = {
       id,
@@ -814,10 +921,7 @@ export class FinanceService {
       sort: Number(input.sort || 0),
       active: input.active !== false,
     };
-    await this.connection.query
-      .insertInto('finCategories')
-      .values(record)
-      .execute();
+    await db.query.insertInto('finCategories').values(record).execute();
     return record;
   }
 
@@ -829,6 +933,7 @@ export class FinanceService {
       sort?: number;
       active?: boolean;
     },
+    db: DatabaseConnection = this.connection,
   ) {
     const updates: Record<string, unknown> = {};
     if (input.name !== undefined) updates.name = input.name.trim();
@@ -836,7 +941,7 @@ export class FinanceService {
     if (input.sort !== undefined) updates.sort = Number(input.sort);
     if (input.active !== undefined) updates.active = Boolean(input.active);
 
-    await this.connection.query
+    await db.query
       .updateTable('finCategories')
       .set(updates)
       .where('id', '=', id)
@@ -884,10 +989,27 @@ export class FinanceService {
         sort: number;
       }>();
 
+    // Tournaments a voucher may still be linked to. Part of the voucher form's options, so tagging a voucher needs
+    // only the voucher permission (docs/plans/2026-11-21-tai-chinh-giai-dau.md, "Quyền").
+    const tournaments = await this.connection.query
+      .selectFrom('finTournaments')
+      .select(['id', 'code', 'name', 'branchId', 'status'])
+      .where('status', '!=', 'closed')
+      .orderBy('startDate', 'desc')
+      .orderBy('code', 'desc')
+      .execute<{
+        id: string;
+        code: string;
+        name: string;
+        branchId: string | null;
+        status: string;
+      }>();
+
     return {
       branches,
       accounts,
       categories: categories.map((c) => ({ ...c, sort: Number(c.sort) })),
+      tournaments,
     };
   }
 }

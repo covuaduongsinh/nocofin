@@ -7,6 +7,7 @@ import {
   categoriesSetting,
   financeCollections,
   reports,
+  tournaments,
   transactions,
 } from '../finance/resources.js';
 
@@ -31,7 +32,13 @@ export default class FinanceProvider extends ServiceProvider<Application> {
       title: title('section'),
       parent: 'business',
     });
-    for (const resource of [transactions, accounts, branches, reports])
+    for (const resource of [
+      transactions,
+      accounts,
+      branches,
+      reports,
+      tournaments,
+    ])
       authz.ui.place(authz.compositeResources.define(resource), {
         section: 'finance',
       });
