@@ -51,7 +51,9 @@ services:
       POSTGRES_USER: nocofin
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
     volumes:
-      - nocofin-pg:/var/lib/postgresql/data
+      # nocofin-pgdata, not the earlier nocofin-pg: that volume was initialised with another password, and Postgres
+      # only reads POSTGRES_PASSWORD when the data directory is empty.
+      - nocofin-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U nocofin -d nocofin']
       interval: 10s
@@ -60,4 +62,4 @@ services:
 
 volumes:
   nocofin-storage:
-  nocofin-pg:
+  nocofin-pgdata:
