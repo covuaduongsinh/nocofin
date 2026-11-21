@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ApiError } from '@nocobase/app-server/router';
 import type { DatabaseConnection } from '@nocobase/db';
 import type {
   FinBranch,
@@ -44,6 +45,119 @@ export interface UpdateTransactionInput {
   description?: string | null;
 }
 
+// Drivers differ in what they return for the same columns: SQLite answers booleans as 0/1, and Postgres answers
+// bigint as a string and a DATE column as a Date at local midnight. The HTTP contract the client reads
+// (client/pages/finance/types.ts) is booleans, numbers and YYYY-MM-DD strings on every dialect, so rows are normalized
+// here before they leave the service.
+const toBoolean = (value: unknown): boolean =>
+  value === true ||
+  value === 1 ||
+  value === '1' ||
+  value === 't' ||
+  value === 'true';
+
+const toCalendarDate = (value: unknown): string => {
+  if (value instanceof Date) {
+    // The driver built this Date at local midnight; toISOString() would shift it a day east of UTC.
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(value).slice(0, 10);
+};
+
+const normalizeBranch = <T extends { active: unknown }>(row: T) => ({
+  ...row,
+  active: toBoolean(row.active),
+});
+
+const normalizeCategory = <T extends { active: unknown; sort: unknown }>(
+  row: T,
+) => ({
+  ...row,
+  sort: Number(row.sort),
+  active: toBoolean(row.active),
+});
+
+const normalizeTransaction = <T extends { amount: unknown; date: unknown }>(
+  row: T,
+) => ({
+  ...row,
+  amount: Number(row.amount),
+  date: toCalendarDate(row.date),
+});
+
+interface VoucherReferences {
+  type: string;
+  categoryId?: string;
+  accountId?: string;
+  branchId?: string | null;
+}
+
+/**
+ * A voucher may only name an existing, active category of its own type, an existing active account and, when it has
+ * one, an existing active branch. Checked here rather than left to the foreign keys, which answer an unknown id with a
+ * 500 and accept inactive or wrongly typed references.
+ */
+async function assertVoucherReferences(
+  connection: DatabaseConnection,
+  refs: VoucherReferences,
+): Promise<void> {
+  const violations: Array<{ field: string; description: string }> = [];
+  if (refs.categoryId !== undefined) {
+    const category = await connection.query
+      .selectFrom('finCategories')
+      .select(['type', 'active'])
+      .where('id', '=', refs.categoryId)
+      .executeTakeFirst<{ type: string; active: unknown }>();
+    if (!category || !toBoolean(category.active))
+      violations.push({
+        field: 'categoryId',
+        description: 'Must name an active category.',
+      });
+    else if (category.type !== refs.type)
+      violations.push({
+        field: 'categoryId',
+        description: `Must name a category of type ${refs.type}.`,
+      });
+  }
+  if (refs.accountId !== undefined) {
+    const account = await connection.query
+      .selectFrom('finAccounts')
+      .select(['active'])
+      .where('id', '=', refs.accountId)
+      .executeTakeFirst<{ active: unknown }>();
+    if (!account || !toBoolean(account.active))
+      violations.push({
+        field: 'accountId',
+        description: 'Must name an active fund account.',
+      });
+  }
+  if (refs.branchId) {
+    const branch = await connection.query
+      .selectFrom('finBranches')
+      .select(['active'])
+      .where('id', '=', refs.branchId)
+      .executeTakeFirst<{ active: unknown }>();
+    if (!branch || !toBoolean(branch.active))
+      violations.push({
+        field: 'branchId',
+        description: 'Must name an active branch.',
+      });
+  }
+  if (violations.length > 0) {
+    throw new ApiError({
+      status: 'INVALID_ARGUMENT',
+      reason: 'FINANCE_VOUCHER_REFERENCE_INVALID',
+      domain: 'finance',
+      message:
+        'The voucher names a missing or inactive category, account or branch.',
+      fieldViolations: violations,
+    });
+  }
+}
+
 export class FinanceService {
   constructor(private readonly connection: DatabaseConnection) {}
 
@@ -65,7 +179,7 @@ export class FinanceService {
       txQuery = txQuery.where('branchId', '=', branchId);
     }
 
-    const periodTransactions = (await txQuery.execute()) as FinTransaction[];
+    const periodTransactions = await txQuery.execute<FinTransaction>();
 
     let totalIncome = 0;
     let totalExpense = 0;
@@ -80,22 +194,32 @@ export class FinanceService {
     const netFlow = totalIncome - totalExpense;
 
     // 2. All active accounts and their current balances across all time
-    const allAccounts = (await this.connection.query
+    const allAccounts = await this.connection.query
       .selectFrom('finAccounts')
       .selectAll()
       .orderBy('kind', 'asc')
       .orderBy('code', 'asc')
-      .execute()) as FinAccount[];
+      .execute<FinAccount>();
 
     // Query sum of transactions for each account
-    const allTransactions = (await this.connection.query
+    const allTransactions = await this.connection.query
       .selectFrom('finTransactions')
       .select(['accountId', 'type', 'amount'])
-      .execute()) as Array<{ accountId: string; type: string; amount: number | string }>;
+      .execute<{
+        accountId: string;
+        type: string;
+        amount: number | string;
+      }>();
 
-    const accountTotals = new Map<string, { income: number; expense: number }>();
+    const accountTotals = new Map<
+      string,
+      { income: number; expense: number }
+    >();
     for (const tx of allTransactions) {
-      const entry = accountTotals.get(tx.accountId) ?? { income: 0, expense: 0 };
+      const entry = accountTotals.get(tx.accountId) ?? {
+        income: 0,
+        expense: 0,
+      };
       const amt = Number(tx.amount);
       if (tx.type === 'income') entry.income += amt;
       else if (tx.type === 'expense') entry.expense += amt;
@@ -107,11 +231,13 @@ export class FinanceService {
       const totals = accountTotals.get(acc.id) ?? { income: 0, expense: 0 };
       const opening = Number(acc.openingBalance);
       const currentBalance = opening + totals.income - totals.expense;
-      if (acc.active) {
+      const active = toBoolean(acc.active);
+      if (active) {
         totalAvailableFunds += currentBalance;
       }
       return {
         ...acc,
+        active,
         openingBalance: opening,
         currentBalance,
         totalIncome: totals.income,
@@ -120,16 +246,19 @@ export class FinanceService {
     });
 
     // 3. Branches performance in this period
-    const allBranches = (await this.connection.query
+    const allBranches = await this.connection.query
       .selectFrom('finBranches')
       .selectAll()
       .orderBy('code', 'asc')
-      .execute()) as FinBranch[];
+      .execute<FinBranch>();
 
     const branchTotals = new Map<string, { income: number; expense: number }>();
     for (const tx of periodTransactions) {
       if (tx.branchId) {
-        const entry = branchTotals.get(tx.branchId) ?? { income: 0, expense: 0 };
+        const entry = branchTotals.get(tx.branchId) ?? {
+          income: 0,
+          expense: 0,
+        };
         const amt = Number(tx.amount);
         if (tx.type === 'income') entry.income += amt;
         else if (tx.type === 'expense') entry.expense += amt;
@@ -140,7 +269,7 @@ export class FinanceService {
     const branchesWithPerformance = allBranches.map((b) => {
       const totals = branchTotals.get(b.id) ?? { income: 0, expense: 0 };
       return {
-        ...b,
+        ...normalizeBranch(b),
         totalIncome: totals.income,
         totalExpense: totals.expense,
         netFlow: totals.income - totals.expense,
@@ -148,11 +277,11 @@ export class FinanceService {
     });
 
     // 4. Categories breakdown in this period
-    const allCategories = (await this.connection.query
+    const allCategories = await this.connection.query
       .selectFrom('finCategories')
       .selectAll()
       .orderBy('sort', 'asc')
-      .execute()) as FinCategory[];
+      .execute<FinCategory>();
 
     const catTotals = new Map<string, number>();
     for (const tx of periodTransactions) {
@@ -160,8 +289,20 @@ export class FinanceService {
       catTotals.set(tx.categoryId, prev + Number(tx.amount));
     }
 
-    const incomeCategories: Array<{ id: string; name: string; code: string; amount: number; percentage: number }> = [];
-    const expenseCategories: Array<{ id: string; name: string; code: string; amount: number; percentage: number }> = [];
+    const incomeCategories: Array<{
+      id: string;
+      name: string;
+      code: string;
+      amount: number;
+      percentage: number;
+    }> = [];
+    const expenseCategories: Array<{
+      id: string;
+      name: string;
+      code: string;
+      amount: number;
+      percentage: number;
+    }> = [];
 
     for (const cat of allCategories) {
       const amt = catTotals.get(cat.id) ?? 0;
@@ -172,7 +313,8 @@ export class FinanceService {
             name: cat.name,
             code: cat.code,
             amount: amt,
-            percentage: totalIncome > 0 ? Math.round((amt / totalIncome) * 100) : 0,
+            percentage:
+              totalIncome > 0 ? Math.round((amt / totalIncome) * 100) : 0,
           });
         } else {
           expenseCategories.push({
@@ -180,7 +322,8 @@ export class FinanceService {
             name: cat.name,
             code: cat.code,
             amount: amt,
-            percentage: totalExpense > 0 ? Math.round((amt / totalExpense) * 100) : 0,
+            percentage:
+              totalExpense > 0 ? Math.round((amt / totalExpense) * 100) : 0,
           });
         }
       }
@@ -193,7 +336,7 @@ export class FinanceService {
     // 5. Timeline daily flow in period
     const dayTotals = new Map<string, { income: number; expense: number }>();
     for (const tx of periodTransactions) {
-      const dateKey = typeof tx.date === 'string' ? tx.date : new Date(tx.date as any).toISOString().slice(0, 10);
+      const dateKey = toCalendarDate(tx.date);
       const entry = dayTotals.get(dateKey) ?? { income: 0, expense: 0 };
       const amt = Number(tx.amount);
       if (tx.type === 'income') entry.income += amt;
@@ -268,43 +411,51 @@ export class FinanceService {
     const total = Number(countResult?.count || 0);
 
     // Fetch page rows
-    const rows = (await baseQuery
+    const rows = await baseQuery
       .selectAll()
       .orderBy('date', 'desc')
       .orderBy('createdAt', 'desc')
       .limit(pageSize)
       .offset(offset)
-      .execute()) as FinTransaction[];
+      .execute<FinTransaction>();
 
     // Enrich with names
-    const categories = (await this.connection.query
+    const categories = await this.connection.query
       .selectFrom('finCategories')
       .select(['id', 'code', 'name', 'type'])
-      .execute()) as Array<{ id: string; code: string; name: string; type: string }>;
+      .execute<{
+        id: string;
+        code: string;
+        name: string;
+        type: string;
+      }>();
     const catMap = new Map(categories.map((c) => [c.id, c]));
 
-    const accounts = (await this.connection.query
+    const accounts = await this.connection.query
       .selectFrom('finAccounts')
       .select(['id', 'code', 'name', 'kind', 'bankName', 'accountNumber'])
-      .execute()) as Array<{ id: string; code: string; name: string; kind: string; bankName: string | null; accountNumber: string | null }>;
+      .execute<{
+        id: string;
+        code: string;
+        name: string;
+        kind: string;
+        bankName: string | null;
+        accountNumber: string | null;
+      }>();
     const accMap = new Map(accounts.map((a) => [a.id, a]));
 
-    const branches = (await this.connection.query
+    const branches = await this.connection.query
       .selectFrom('finBranches')
       .select(['id', 'code', 'name'])
-      .execute()) as Array<{ id: string; code: string; name: string }>;
+      .execute<{ id: string; code: string; name: string }>();
     const branchMap = new Map(branches.map((b) => [b.id, b]));
 
     const enrichedRows = rows.map((r) => {
       const cat = catMap.get(r.categoryId);
       const acc = accMap.get(r.accountId);
       const branch = r.branchId ? branchMap.get(r.branchId) : null;
-      const dateStr = typeof r.date === 'string' ? r.date : new Date(r.date as any).toISOString().slice(0, 10);
       return {
-        ...r,
-        amount: Number(r.amount),
-        date: dateStr,
-        transactionDate: dateStr,
+        ...normalizeTransaction(r),
         categoryName: cat?.name ?? '',
         categoryCode: cat?.code ?? '',
         accountName: acc?.name ?? '',
@@ -327,63 +478,66 @@ export class FinanceService {
    * PT-YYYY-0001 (Income) or PC-YYYY-0001 (Expense)
    */
   async createTransaction(input: CreateTransactionInput, userId: string) {
-    const year = new Date(input.date).getFullYear();
+    // The year is read from the YYYY-MM-DD text: new Date(text) is UTC midnight, a different year west of UTC on 1 Jan.
+    const year = input.date.slice(0, 4);
     const prefix = input.type === 'income' ? 'PT' : 'PC';
     const counterKey = `${prefix}-${year}`;
 
-    // Atomically increment counter in transaction
-    const nextSeq = await this.connection.transaction(async (trx) => {
+    const period = input.date.slice(0, 7);
+
+    // References, the voucher number and the voucher are one transaction: a rejected or failed insert must not consume
+    // a number from the counter.
+    return this.connection.transaction(async (trx) => {
+      await assertVoucherReferences(trx, {
+        type: input.type,
+        categoryId: input.categoryId,
+        accountId: input.accountId,
+        branchId: input.branchId ?? null,
+      });
+
       const existing = await trx.query
         .selectFrom('finCounters')
         .select(['value'])
         .where('key', '=', counterKey)
         .executeTakeFirst();
 
-      let val = 1;
+      let nextSeq = 1;
       if (existing) {
-        val = Number(existing.value) + 1;
+        nextSeq = Number(existing.value) + 1;
         await trx.query
           .updateTable('finCounters')
-          .set({ value: val })
+          .set({ value: nextSeq })
           .where('key', '=', counterKey)
           .execute();
       } else {
         await trx.query
           .insertInto('finCounters')
-          .values({ key: counterKey, value: val })
+          .values({ key: counterKey, value: nextSeq })
           .execute();
       }
-      return val;
+
+      const now = new Date();
+      const record = {
+        id: randomUUID(),
+        code: `${counterKey}-${String(nextSeq).padStart(4, '0')}`,
+        type: input.type,
+        date: input.date,
+        period,
+        amount: Math.round(Number(input.amount)),
+        categoryId: input.categoryId,
+        accountId: input.accountId,
+        branchId: input.branchId || null,
+        counterparty: input.counterparty || null,
+        description: input.description || null,
+        createdById: userId,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await trx.query.insertInto('finTransactions').values(record).execute();
+
+      return record;
     });
-
-    const code = `${counterKey}-${String(nextSeq).padStart(4, '0')}`;
-    const id = randomUUID();
-    const now = new Date();
-    const period = input.date.slice(0, 7);
-
-    const record = {
-      id,
-      code,
-      type: input.type,
-      date: input.date,
-      period,
-      amount: Math.round(Number(input.amount)),
-      categoryId: input.categoryId,
-      accountId: input.accountId,
-      branchId: input.branchId || null,
-      counterparty: input.counterparty || null,
-      description: input.description || null,
-      createdById: userId,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await this.connection.query
-      .insertInto('finTransactions')
-      .values(record)
-      .execute();
-
-    return record;
   }
 
   /**
@@ -397,8 +551,26 @@ export class FinanceService {
       .executeTakeFirst();
 
     if (!existing) {
-      throw new Error(`Transaction ${id} not found`);
+      throw new ApiError({
+        status: 'NOT_FOUND',
+        reason: 'FINANCE_TRANSACTION_NOT_FOUND',
+        domain: 'finance',
+        message: `Transaction ${id} was not found.`,
+      });
     }
+    const current = existing as unknown as FinTransaction;
+    // Only references the edit changes are checked, so a voucher whose category or account was retired later can still
+    // be corrected in its other fields.
+    const changed = (field: 'categoryId' | 'accountId' | 'branchId') =>
+      input[field] !== undefined && (input[field] || null) !== current[field]
+        ? (input[field] ?? null)
+        : undefined;
+    await assertVoucherReferences(this.connection, {
+      type: current.type,
+      categoryId: changed('categoryId') ?? undefined,
+      accountId: changed('accountId') ?? undefined,
+      branchId: changed('branchId'),
+    });
 
     const updates: Record<string, unknown> = {
       updatedAt: new Date(),
@@ -433,7 +605,7 @@ export class FinanceService {
       .where('id', '=', id)
       .execute();
 
-    return { ...existing, ...updates };
+    return normalizeTransaction({ ...current, ...updates });
   }
 
   /**
@@ -451,17 +623,21 @@ export class FinanceService {
    * Accounts CRUD
    */
   async listAccounts() {
-    const accounts = (await this.connection.query
+    const accounts = await this.connection.query
       .selectFrom('finAccounts')
       .selectAll()
       .orderBy('kind', 'asc')
       .orderBy('code', 'asc')
-      .execute()) as FinAccount[];
+      .execute<FinAccount>();
 
-    const txs = (await this.connection.query
+    const txs = await this.connection.query
       .selectFrom('finTransactions')
       .select(['accountId', 'type', 'amount'])
-      .execute()) as Array<{ accountId: string; type: string; amount: number | string }>;
+      .execute<{
+        accountId: string;
+        type: string;
+        amount: number | string;
+      }>();
 
     const totals = new Map<string, { income: number; expense: number }>();
     for (const tx of txs) {
@@ -477,6 +653,7 @@ export class FinanceService {
       const opening = Number(acc.openingBalance);
       return {
         ...acc,
+        active: toBoolean(acc.active),
         openingBalance: opening,
         totalIncome: t.income,
         totalExpense: t.expense,
@@ -507,7 +684,10 @@ export class FinanceService {
       active: input.active !== false,
       note: input.note?.trim() || null,
     };
-    await this.connection.query.insertInto('finAccounts').values(record).execute();
+    await this.connection.query
+      .insertInto('finAccounts')
+      .values(record)
+      .execute();
     return record;
   }
 
@@ -526,9 +706,12 @@ export class FinanceService {
     const updates: Record<string, unknown> = {};
     if (input.name !== undefined) updates.name = input.name.trim();
     if (input.kind !== undefined) updates.kind = input.kind;
-    if (input.bankName !== undefined) updates.bankName = input.bankName?.trim() || null;
-    if (input.accountNumber !== undefined) updates.accountNumber = input.accountNumber?.trim() || null;
-    if (input.openingBalance !== undefined) updates.openingBalance = Math.round(Number(input.openingBalance));
+    if (input.bankName !== undefined)
+      updates.bankName = input.bankName?.trim() || null;
+    if (input.accountNumber !== undefined)
+      updates.accountNumber = input.accountNumber?.trim() || null;
+    if (input.openingBalance !== undefined)
+      updates.openingBalance = Math.round(Number(input.openingBalance));
     if (input.active !== undefined) updates.active = Boolean(input.active);
     if (input.note !== undefined) updates.note = input.note?.trim() || null;
 
@@ -545,11 +728,12 @@ export class FinanceService {
    * Branches CRUD
    */
   async listBranches() {
-    return this.connection.query
+    const rows = await this.connection.query
       .selectFrom('finBranches')
       .selectAll()
       .orderBy('code', 'asc')
-      .execute();
+      .execute<FinBranch>();
+    return rows.map(normalizeBranch);
   }
 
   async createBranch(input: {
@@ -568,7 +752,10 @@ export class FinanceService {
       active: input.active !== false,
       note: input.note?.trim() || null,
     };
-    await this.connection.query.insertInto('finBranches').values(record).execute();
+    await this.connection.query
+      .insertInto('finBranches')
+      .values(record)
+      .execute();
     return record;
   }
 
@@ -604,7 +791,11 @@ export class FinanceService {
     if (type) {
       q = q.where('type', '=', type);
     }
-    return q.orderBy('type', 'asc').orderBy('sort', 'asc').execute();
+    const rows = await q
+      .orderBy('type', 'asc')
+      .orderBy('sort', 'asc')
+      .execute<FinCategory>();
+    return rows.map(normalizeCategory);
   }
 
   async createCategory(input: {
@@ -623,7 +814,10 @@ export class FinanceService {
       sort: Number(input.sort || 0),
       active: input.active !== false,
     };
-    await this.connection.query.insertInto('finCategories').values(record).execute();
+    await this.connection.query
+      .insertInto('finCategories')
+      .values(record)
+      .execute();
     return record;
   }
 
@@ -655,32 +849,45 @@ export class FinanceService {
    * Options for transaction form: active branches, active accounts, active categories
    */
   async getOptions() {
-    const branches = (await this.connection.query
+    const branches = await this.connection.query
       .selectFrom('finBranches')
       .select(['id', 'code', 'name'])
       .where('active', '=', true)
       .orderBy('code', 'asc')
-      .execute()) as Array<{ id: string; code: string; name: string }>;
+      .execute<{ id: string; code: string; name: string }>();
 
-    const accounts = (await this.connection.query
+    const accounts = await this.connection.query
       .selectFrom('finAccounts')
       .select(['id', 'code', 'name', 'kind', 'bankName', 'accountNumber'])
       .where('active', '=', true)
       .orderBy('code', 'asc')
-      .execute()) as Array<{ id: string; code: string; name: string; kind: string; bankName: string | null; accountNumber: string | null }>;
+      .execute<{
+        id: string;
+        code: string;
+        name: string;
+        kind: string;
+        bankName: string | null;
+        accountNumber: string | null;
+      }>();
 
-    const categories = (await this.connection.query
+    const categories = await this.connection.query
       .selectFrom('finCategories')
       .select(['id', 'code', 'name', 'type', 'sort'])
       .where('active', '=', true)
       .orderBy('type', 'asc')
       .orderBy('sort', 'asc')
-      .execute()) as Array<{ id: string; code: string; name: string; type: string; sort: number }>;
+      .execute<{
+        id: string;
+        code: string;
+        name: string;
+        type: string;
+        sort: number;
+      }>();
 
     return {
       branches,
       accounts,
-      categories,
+      categories: categories.map((c) => ({ ...c, sort: Number(c.sort) })),
     };
   }
 }

@@ -11,6 +11,12 @@ export function formatVnd(amount: number | null | undefined): string {
 
 export function formatDate(dateString: string | null | undefined): string {
   if (!dateString) return '-';
+  // A voucher date is a calendar date (YYYY-MM-DD); formatting it through Date would read it as UTC midnight and
+  // shift it a day in time zones west of UTC.
+  const calendarDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString);
+  if (calendarDate) {
+    return `${calendarDate[3]}/${calendarDate[2]}/${calendarDate[1]}`;
+  }
   try {
     const d = new Date(dateString);
     if (Number.isNaN(d.getTime())) return dateString;

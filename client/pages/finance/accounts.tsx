@@ -1,14 +1,6 @@
 import { useApiClient, useSubmission, useToaster } from '@nocobase/app-client';
 import { useTranslation } from '@nocobase/i18n/client';
-import {
-  Landmark,
-  Wallet,
-  Plus,
-  Edit2,
-  RefreshCw,
-  CheckCircle2,
-  XCircle,
-} from 'lucide-react';
+import { Landmark, Wallet, Plus, Edit2, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactElement } from 'react';
 
 import { Loading } from '#components/loading';
@@ -57,7 +49,9 @@ export default function FinanceAccountsPage(): ReactElement {
 
   // Dialog State
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
-  const [editingAccount, setEditingAccount] = useState<FinanceAccount | null>(null);
+  const [editingAccount, setEditingAccount] = useState<FinanceAccount | null>(
+    null,
+  );
   const [formCode, setFormCode] = useState<string>('');
   const [formName, setFormName] = useState<string>('');
   const [formKind, setFormKind] = useState<'bank' | 'cash' | 'ewallet'>('bank');
@@ -76,7 +70,7 @@ export default function FinanceAccountsPage(): ReactElement {
         path: 'finance/accounts',
       });
       setAccounts(res.data);
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Không thể tải danh sách tài khoản quỹ',
@@ -92,13 +86,13 @@ export default function FinanceAccountsPage(): ReactElement {
 
   // Aggregate stats
   const totalFunds = accounts
-    .filter((a) => a.isActive)
+    .filter((a) => a.active)
     .reduce((sum, a) => sum + (Number(a.currentBalance) || 0), 0);
   const bankFunds = accounts
-    .filter((a) => a.kind === 'bank' && a.isActive)
+    .filter((a) => a.kind === 'bank' && a.active)
     .reduce((sum, a) => sum + (Number(a.currentBalance) || 0), 0);
   const cashFunds = accounts
-    .filter((a) => a.kind === 'cash' && a.isActive)
+    .filter((a) => a.kind === 'cash' && a.active)
     .reduce((sum, a) => sum + (Number(a.currentBalance) || 0), 0);
 
   const openCreateDialog = () => {
@@ -123,7 +117,7 @@ export default function FinanceAccountsPage(): ReactElement {
     setFormAccountNumber(acc.accountNumber ?? '');
     setFormOpeningBalance(String(acc.openingBalance));
     setFormNote(acc.note ?? '');
-    setFormIsActive(acc.isActive);
+    setFormIsActive(acc.active);
     setDialogOpen(true);
   };
 
@@ -154,7 +148,7 @@ export default function FinanceAccountsPage(): ReactElement {
                 accountNumber: formAccountNumber.trim() || null,
                 openingBalance: openingNum,
                 note: formNote.trim() || null,
-                isActive: formIsActive,
+                active: formIsActive,
               },
               headers: { 'Idempotency-Key': key },
             });
@@ -171,7 +165,7 @@ export default function FinanceAccountsPage(): ReactElement {
               accountNumber: formAccountNumber.trim() || null,
               openingBalance: openingNum,
               note: formNote.trim() || null,
-              isActive: formIsActive,
+              active: formIsActive,
             },
             headers: { 'Idempotency-Key': key },
           });
@@ -181,12 +175,14 @@ export default function FinanceAccountsPage(): ReactElement {
       if (outcome) {
         toaster.show({
           type: 'success',
-          title: editingAccount ? 'Cập nhật tài khoản thành công' : 'Thêm tài khoản quỹ thành công',
+          title: editingAccount
+            ? 'Cập nhật tài khoản thành công'
+            : 'Thêm tài khoản quỹ thành công',
         });
         setDialogOpen(false);
         void loadData();
       }
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Lỗi khi lưu tài khoản quỹ',
@@ -218,7 +214,9 @@ export default function FinanceAccountsPage(): ReactElement {
             disabled={loading}
             className='gap-1.5'
           >
-            <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`size-3.5 ${loading ? 'animate-spin' : ''}`}
+            />
             Làm mới
           </Button>
         </div>
@@ -280,13 +278,21 @@ export default function FinanceAccountsPage(): ReactElement {
           <Table>
             <TableHeader>
               <TableRow className='bg-muted/50'>
-                <TableHead className='w-28'>{t('finance.accounts.code')}</TableHead>
+                <TableHead className='w-28'>
+                  {t('finance.accounts.code')}
+                </TableHead>
                 <TableHead>{t('finance.accounts.name')}</TableHead>
                 <TableHead>{t('finance.accounts.kind')}</TableHead>
                 <TableHead>{t('finance.accounts.bankName')} / STK</TableHead>
-                <TableHead className='text-right'>{t('finance.accounts.openingBalance')}</TableHead>
-                <TableHead className='text-right'>{t('finance.accounts.currentBalance')}</TableHead>
-                <TableHead className='text-center w-24'>{t('finance.accounts.status')}</TableHead>
+                <TableHead className='text-right'>
+                  {t('finance.accounts.openingBalance')}
+                </TableHead>
+                <TableHead className='text-right'>
+                  {t('finance.accounts.currentBalance')}
+                </TableHead>
+                <TableHead className='text-center w-24'>
+                  {t('finance.accounts.status')}
+                </TableHead>
                 <TableHead className='text-right w-20'>Thao tác</TableHead>
               </TableRow>
             </TableHeader>
@@ -310,13 +316,15 @@ export default function FinanceAccountsPage(): ReactElement {
                     {acc.kind === 'bank'
                       ? t('finance.accounts.bank')
                       : acc.kind === 'cash'
-                      ? t('finance.accounts.cash')
-                      : t('finance.accounts.ewallet')}
+                        ? t('finance.accounts.cash')
+                        : t('finance.accounts.ewallet')}
                   </TableCell>
                   <TableCell className='text-xs text-muted-foreground'>
                     {acc.kind === 'bank' && acc.bankName ? (
                       <div>
-                        <span className='font-medium text-foreground'>{acc.bankName}</span>
+                        <span className='font-medium text-foreground'>
+                          {acc.bankName}
+                        </span>
                         {acc.accountNumber && ` - ${acc.accountNumber}`}
                       </div>
                     ) : (
@@ -331,14 +339,16 @@ export default function FinanceAccountsPage(): ReactElement {
                   </TableCell>
                   <TableCell className='text-center'>
                     <Badge
-                      variant={acc.isActive ? 'outline' : 'secondary'}
+                      variant={acc.active ? 'outline' : 'secondary'}
                       className={
-                        acc.isActive
+                        acc.active
                           ? 'border-emerald-300 text-emerald-700 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:bg-emerald-950/40'
                           : 'text-muted-foreground'
                       }
                     >
-                      {acc.isActive ? t('finance.accounts.active') : t('finance.accounts.inactive')}
+                      {acc.active
+                        ? t('finance.accounts.active')
+                        : t('finance.accounts.inactive')}
                     </Badge>
                   </TableCell>
                   <TableCell className='text-right'>
@@ -402,9 +412,15 @@ export default function FinanceAccountsPage(): ReactElement {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='bank'>{t('finance.accounts.bank')}</SelectItem>
-                    <SelectItem value='cash'>{t('finance.accounts.cash')}</SelectItem>
-                    <SelectItem value='ewallet'>{t('finance.accounts.ewallet')}</SelectItem>
+                    <SelectItem value='bank'>
+                      {t('finance.accounts.bank')}
+                    </SelectItem>
+                    <SelectItem value='cash'>
+                      {t('finance.accounts.cash')}
+                    </SelectItem>
+                    <SelectItem value='ewallet'>
+                      {t('finance.accounts.ewallet')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -507,7 +523,9 @@ export default function FinanceAccountsPage(): ReactElement {
               disabled={submission.submitting}
               onClick={() => void handleSave()}
             >
-              {submission.submitting ? 'Đang lưu...' : t('finance.accounts.save')}
+              {submission.submitting
+                ? 'Đang lưu...'
+                : t('finance.accounts.save')}
             </Button>
           </DialogFooter>
         </DialogContent>

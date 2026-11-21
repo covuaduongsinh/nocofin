@@ -21,7 +21,13 @@ import { Loading } from '#components/loading';
 import { PageContainer } from '#components/page-container';
 import { PageHeader } from '#components/page-header';
 import { Button, buttonVariants } from '#components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '#components/ui/card';
 import { Badge } from '#components/ui/badge';
 import {
   Table,
@@ -49,7 +55,12 @@ import {
 } from '#components/ui/select';
 import { Textarea } from '#components/ui/textarea';
 
-import { formatDate, formatVnd, getCurrentMonth, getTodayDate } from './format.js';
+import {
+  formatDate,
+  formatVnd,
+  getCurrentMonth,
+  getTodayDate,
+} from './format.js';
 import type {
   FinanceOverviewData,
   FinanceOptionsData,
@@ -61,7 +72,7 @@ export default function FinanceOverviewPage(): ReactElement {
   const api = useApiClient();
   const toaster = useToaster();
 
-  const [month, setMonth] = useState<string>(getCurrentMonth());
+  const [month, setMonth] = useState<string>(getCurrentMonth);
   const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
   const [loading, setLoading] = useState<boolean>(true);
   const [overview, setOverview] = useState<FinanceOverviewData | null>(null);
@@ -70,14 +81,13 @@ export default function FinanceOverviewPage(): ReactElement {
   // Quick transaction dialog state
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
   const [voucherType, setVoucherType] = useState<TransactionType>('income');
-  const [formDate, setFormDate] = useState<string>(getTodayDate());
+  const [formDate, setFormDate] = useState<string>(getTodayDate);
   const [formAmount, setFormAmount] = useState<string>('');
   const [formCategoryId, setFormCategoryId] = useState<string>('');
   const [formAccountId, setFormAccountId] = useState<string>('');
   const [formBranchId, setFormBranchId] = useState<string>('');
   const [formCounterparty, setFormCounterparty] = useState<string>('');
   const [formDescription, setFormDescription] = useState<string>('');
-  const [formReferenceNo, setFormReferenceNo] = useState<string>('');
 
   const submission = useSubmission({ scope: 'finance-quick-voucher' });
 
@@ -85,8 +95,9 @@ export default function FinanceOverviewPage(): ReactElement {
     setLoading(true);
     try {
       const queryParams = new URLSearchParams();
-      if (month) queryParams.set('month', month);
-      if (selectedBranchId !== 'all') queryParams.set('branchId', selectedBranchId);
+      if (month) queryParams.set('period', month);
+      if (selectedBranchId !== 'all')
+        queryParams.set('branchId', selectedBranchId);
 
       const [overviewRes, optionsRes] = await Promise.all([
         api.request<{ data: FinanceOverviewData }>({
@@ -99,7 +110,7 @@ export default function FinanceOverviewPage(): ReactElement {
 
       setOverview(overviewRes.data);
       setOptions(optionsRes.data);
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Không thể tải dữ liệu tài chính',
@@ -119,14 +130,13 @@ export default function FinanceOverviewPage(): ReactElement {
     setFormAmount('');
     setFormCounterparty('');
     setFormDescription('');
-    setFormReferenceNo('');
 
     // Pre-select defaults
     if (options) {
-      const matchingCats = options.categories.filter((c) => c.type === type && c.isActive);
-      if (matchingCats.length > 0) setFormCategoryId(matchingCats[0]!.id);
-      if (options.accounts.length > 0) setFormAccountId(options.accounts[0]!.id);
-      if (options.branches.length > 0) setFormBranchId(options.branches[0]!.id);
+      const matchingCats = options.categories.filter((c) => c.type === type);
+      if (matchingCats.length > 0) setFormCategoryId(matchingCats[0].id);
+      if (options.accounts.length > 0) setFormAccountId(options.accounts[0].id);
+      if (options.branches.length > 0) setFormBranchId(options.branches[0].id);
     }
 
     setDialogOpen(true);
@@ -176,10 +186,9 @@ export default function FinanceOverviewPage(): ReactElement {
               accountId: formAccountId,
               categoryId: formCategoryId,
               amount: numAmount,
-              transactionDate: formDate,
-              counterparty: formCounterparty.trim() || undefined,
-              description: formDescription.trim() || undefined,
-              referenceNo: formReferenceNo.trim() || undefined,
+              date: formDate,
+              counterparty: formCounterparty.trim() || null,
+              description: formDescription.trim() || null,
             },
             headers: {
               'Idempotency-Key': key,
@@ -196,7 +205,7 @@ export default function FinanceOverviewPage(): ReactElement {
         setDialogOpen(false);
         void loadData();
       }
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Lỗi khi lưu phiếu thu/chi',
@@ -216,12 +225,12 @@ export default function FinanceOverviewPage(): ReactElement {
 
   const branches = overview?.branches || [];
   const accounts = overview?.accounts || [];
-  const incomeCategories: FinanceOverviewData['incomeCategories'] =
-    overview?.incomeCategories || (overview as any)?.breakdown?.income || [];
-  const expenseCategories: FinanceOverviewData['expenseCategories'] =
-    overview?.expenseCategories || (overview as any)?.breakdown?.expense || [];
-  const dailyFlow: FinanceOverviewData['dailyFlow'] =
-    overview?.dailyFlow || (overview as any)?.timeline || [];
+  const incomeCategories = overview?.incomeCategories || [];
+  const expenseCategories = overview?.expenseCategories || [];
+  const dailyFlow = (overview?.dailyFlow || []).map((day) => ({
+    ...day,
+    net: day.income - day.expense,
+  }));
 
   return (
     <PageContainer className='space-y-6'>
@@ -263,7 +272,9 @@ export default function FinanceOverviewPage(): ReactElement {
         <div className='flex flex-wrap items-center gap-3'>
           <div className='flex items-center gap-2'>
             <Calendar className='size-4 text-muted-foreground' />
-            <span className='text-sm font-medium'>{t('finance.overview.period')}:</span>
+            <span className='text-sm font-medium'>
+              {t('finance.overview.period')}:
+            </span>
             <div className='flex items-center gap-1'>
               <Button
                 variant='outline'
@@ -300,7 +311,9 @@ export default function FinanceOverviewPage(): ReactElement {
 
           <div className='flex items-center gap-2'>
             <Building2 className='size-4 text-muted-foreground' />
-            <span className='text-sm font-medium'>{t('finance.overview.branch')}:</span>
+            <span className='text-sm font-medium'>
+              {t('finance.overview.branch')}:
+            </span>
             <Select
               value={selectedBranchId}
               onValueChange={(val) => {
@@ -311,7 +324,9 @@ export default function FinanceOverviewPage(): ReactElement {
                 <SelectValue placeholder={t('finance.overview.allBranches')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='all'>{t('finance.overview.allBranches')}</SelectItem>
+                <SelectItem value='all'>
+                  {t('finance.overview.allBranches')}
+                </SelectItem>
                 {options?.branches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
                     {b.name}
@@ -454,7 +469,10 @@ export default function FinanceOverviewPage(): ReactElement {
                 </div>
                 <Link
                   to='/finance/branches'
-                  className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'gap-1 text-xs')}
+                  className={cn(
+                    buttonVariants({ variant: 'ghost', size: 'sm' }),
+                    'gap-1 text-xs',
+                  )}
                 >
                   Quản lý <ArrowRight className='size-3' />
                 </Link>
@@ -475,23 +493,27 @@ export default function FinanceOverviewPage(): ReactElement {
                           </Badge>
                         </div>
                         <Badge
-                          variant={b.net >= 0 ? 'default' : 'destructive'}
-                          className={b.net >= 0 ? 'bg-emerald-600' : ''}
+                          variant={b.netFlow >= 0 ? 'default' : 'destructive'}
+                          className={b.netFlow >= 0 ? 'bg-emerald-600' : ''}
                         >
-                          Ròng: {formatVnd(b.net)}
+                          Ròng: {formatVnd(b.netFlow)}
                         </Badge>
                       </div>
                       <div className='grid grid-cols-2 gap-2 pt-3 text-sm'>
                         <div>
-                          <span className='text-muted-foreground'>Tổng thu: </span>
+                          <span className='text-muted-foreground'>
+                            Tổng thu:{' '}
+                          </span>
                           <span className='font-medium text-emerald-600 dark:text-emerald-400'>
-                            +{formatVnd(b.income)}
+                            +{formatVnd(b.totalIncome)}
                           </span>
                         </div>
                         <div>
-                          <span className='text-muted-foreground'>Tổng chi: </span>
+                          <span className='text-muted-foreground'>
+                            Tổng chi:{' '}
+                          </span>
                           <span className='font-medium text-rose-600 dark:text-rose-400'>
-                            -{formatVnd(b.expense)}
+                            -{formatVnd(b.totalExpense)}
                           </span>
                         </div>
                       </div>
@@ -519,7 +541,10 @@ export default function FinanceOverviewPage(): ReactElement {
                 </div>
                 <Link
                   to='/finance/accounts'
-                  className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'gap-1 text-xs')}
+                  className={cn(
+                    buttonVariants({ variant: 'ghost', size: 'sm' }),
+                    'gap-1 text-xs',
+                  )}
                 >
                   Quản lý <ArrowRight className='size-3' />
                 </Link>
@@ -571,7 +596,9 @@ export default function FinanceOverviewPage(): ReactElement {
                 <CardTitle className='text-base font-semibold text-emerald-700 dark:text-emerald-400'>
                   {t('finance.overview.incomeBreakdown')}
                 </CardTitle>
-                <CardDescription>Phân loại các nguồn thu trong tháng</CardDescription>
+                <CardDescription>
+                  Phân loại các nguồn thu trong tháng
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {incomeCategories.length === 0 ? (
@@ -581,16 +608,13 @@ export default function FinanceOverviewPage(): ReactElement {
                 ) : (
                   <div className='space-y-3'>
                     {incomeCategories.map((cat) => {
-                      const pct =
-                        overview.totalIncome > 0
-                          ? Math.round((cat.total / overview.totalIncome) * 100)
-                          : 0;
+                      const pct = cat.percentage;
                       return (
                         <div key={cat.code} className='space-y-1'>
                           <div className='flex justify-between text-sm'>
                             <span className='font-medium'>{cat.name}</span>
                             <span className='font-semibold text-emerald-600 dark:text-emerald-400'>
-                              {formatVnd(cat.total)} ({pct}%)
+                              {formatVnd(cat.amount)} ({pct}%)
                             </span>
                           </div>
                           <div className='h-2 w-full overflow-hidden rounded-full bg-secondary'>
@@ -613,7 +637,9 @@ export default function FinanceOverviewPage(): ReactElement {
                 <CardTitle className='text-base font-semibold text-rose-700 dark:text-rose-400'>
                   {t('finance.overview.expenseBreakdown')}
                 </CardTitle>
-                <CardDescription>Phân loại các khoản chi phí trong tháng</CardDescription>
+                <CardDescription>
+                  Phân loại các khoản chi phí trong tháng
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {expenseCategories.length === 0 ? (
@@ -623,16 +649,13 @@ export default function FinanceOverviewPage(): ReactElement {
                 ) : (
                   <div className='space-y-3'>
                     {expenseCategories.map((cat) => {
-                      const pct =
-                        overview.totalExpense > 0
-                          ? Math.round((cat.total / overview.totalExpense) * 100)
-                          : 0;
+                      const pct = cat.percentage;
                       return (
                         <div key={cat.code} className='space-y-1'>
                           <div className='flex justify-between text-sm'>
                             <span className='font-medium'>{cat.name}</span>
                             <span className='font-semibold text-rose-600 dark:text-rose-400'>
-                              {formatVnd(cat.total)} ({pct}%)
+                              {formatVnd(cat.amount)} ({pct}%)
                             </span>
                           </div>
                           <div className='h-2 w-full overflow-hidden rounded-full bg-secondary'>
@@ -656,7 +679,9 @@ export default function FinanceOverviewPage(): ReactElement {
               <CardTitle className='text-base font-semibold'>
                 {t('finance.overview.dailyFlow')}
               </CardTitle>
-              <CardDescription>Dòng tiền biến động theo từng ngày trong tháng</CardDescription>
+              <CardDescription>
+                Dòng tiền biến động theo từng ngày trong tháng
+              </CardDescription>
             </CardHeader>
             <CardContent>
               {dailyFlow.length === 0 ? (
@@ -671,18 +696,24 @@ export default function FinanceOverviewPage(): ReactElement {
                         <TableHead>Ngày</TableHead>
                         <TableHead className='text-right'>Tổng thu</TableHead>
                         <TableHead className='text-right'>Tổng chi</TableHead>
-                        <TableHead className='text-right'>Dòng tiền ròng</TableHead>
+                        <TableHead className='text-right'>
+                          Dòng tiền ròng
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {dailyFlow.map((day) => (
                         <TableRow key={day.date}>
-                          <TableCell className='font-medium'>{formatDate(day.date)}</TableCell>
+                          <TableCell className='font-medium'>
+                            {formatDate(day.date)}
+                          </TableCell>
                           <TableCell className='text-right font-medium text-emerald-600 dark:text-emerald-400'>
                             {day.income > 0 ? `+${formatVnd(day.income)}` : '-'}
                           </TableCell>
                           <TableCell className='text-right font-medium text-rose-600 dark:text-rose-400'>
-                            {day.expense > 0 ? `-${formatVnd(day.expense)}` : '-'}
+                            {day.expense > 0
+                              ? `-${formatVnd(day.expense)}`
+                              : '-'}
                           </TableCell>
                           <TableCell
                             className={`text-right font-semibold ${
@@ -733,7 +764,7 @@ export default function FinanceOverviewPage(): ReactElement {
                   setVoucherType('income');
                   if (options) {
                     const match = options.categories.find(
-                      (c) => c.type === 'income' && c.isActive,
+                      (c) => c.type === 'income',
                     );
                     if (match) setFormCategoryId(match.id);
                   }
@@ -748,7 +779,7 @@ export default function FinanceOverviewPage(): ReactElement {
                   setVoucherType('expense');
                   if (options) {
                     const match = options.categories.find(
-                      (c) => c.type === 'expense' && c.isActive,
+                      (c) => c.type === 'expense',
                     );
                     if (match) setFormCategoryId(match.id);
                   }
@@ -807,7 +838,7 @@ export default function FinanceOverviewPage(): ReactElement {
                   </SelectTrigger>
                   <SelectContent>
                     {options?.categories
-                      .filter((c) => c.type === voucherType && c.isActive)
+                      .filter((c) => c.type === voucherType)
                       .map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.name}
@@ -831,13 +862,11 @@ export default function FinanceOverviewPage(): ReactElement {
                     <SelectValue placeholder='Chọn quỹ / TK' />
                   </SelectTrigger>
                   <SelectContent>
-                    {options?.accounts
-                      .filter((a) => a.isActive)
-                      .map((a) => (
-                        <SelectItem key={a.id} value={a.id}>
-                          {a.name}
-                        </SelectItem>
-                      ))}
+                    {options?.accounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -859,13 +888,11 @@ export default function FinanceOverviewPage(): ReactElement {
                     <SelectValue placeholder='Chọn cơ sở' />
                   </SelectTrigger>
                   <SelectContent>
-                    {options?.branches
-                      .filter((b) => b.isActive)
-                      .map((b) => (
-                        <SelectItem key={b.id} value={b.id}>
-                          {b.name}
-                        </SelectItem>
-                      ))}
+                    {options?.branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -881,19 +908,6 @@ export default function FinanceOverviewPage(): ReactElement {
                   className='mt-1'
                 />
               </div>
-            </div>
-
-            {/* Reference Bill No and Description */}
-            <div>
-              <label className='text-xs font-medium text-muted-foreground'>
-                Mã giao dịch / Bill tham chiếu
-              </label>
-              <Input
-                placeholder='Mã giao dịch ngân hàng, số hóa đơn...'
-                value={formReferenceNo}
-                onChange={(e) => setFormReferenceNo(e.target.value)}
-                className='mt-1'
-              />
             </div>
 
             <div>

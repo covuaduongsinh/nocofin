@@ -1,11 +1,6 @@
 import { useApiClient, useSubmission, useToaster } from '@nocobase/app-client';
 import { useTranslation } from '@nocobase/i18n/client';
-import {
-  Tag,
-  Plus,
-  Edit2,
-  RefreshCw,
-} from 'lucide-react';
+import { Tag, Plus, Edit2, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactElement } from 'react';
 
 import { Loading } from '#components/loading';
@@ -53,7 +48,8 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
 
   // Dialog State
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
-  const [editingCategory, setEditingCategory] = useState<FinanceCategory | null>(null);
+  const [editingCategory, setEditingCategory] =
+    useState<FinanceCategory | null>(null);
   const [formCode, setFormCode] = useState<string>('');
   const [formName, setFormName] = useState<string>('');
   const [formType, setFormType] = useState<TransactionType>('income');
@@ -69,7 +65,7 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
         path: 'finance/categories',
       });
       setCategories(res.data);
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Không thể tải danh mục thu chi',
@@ -100,8 +96,8 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
     setFormCode(cat.code);
     setFormName(cat.name);
     setFormType(cat.type);
-    setFormSortOrder(String(cat.sortOrder));
-    setFormIsActive(cat.isActive);
+    setFormSortOrder(String(cat.sort));
+    setFormIsActive(cat.active);
     setDialogOpen(true);
   };
 
@@ -127,8 +123,8 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
               method: 'PATCH',
               json: {
                 name: formName.trim(),
-                sortOrder: sortNum,
-                isActive: formIsActive,
+                sort: sortNum,
+                active: formIsActive,
               },
               headers: { 'Idempotency-Key': key },
             });
@@ -141,8 +137,8 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
               code: formCode.trim().toUpperCase(),
               name: formName.trim(),
               type: formType,
-              sortOrder: sortNum,
-              isActive: formIsActive,
+              sort: sortNum,
+              active: formIsActive,
             },
             headers: { 'Idempotency-Key': key },
           });
@@ -159,7 +155,7 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
         setDialogOpen(false);
         void loadData();
       }
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Lỗi khi lưu danh mục thu chi',
@@ -191,7 +187,9 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
             disabled={loading}
             className='gap-1.5'
           >
-            <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`size-3.5 ${loading ? 'animate-spin' : ''}`}
+            />
             Làm mới
           </Button>
         </div>
@@ -200,7 +198,7 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
       {/* Tabs for Income / Expense */}
       <Tabs
         value={activeTab}
-        onValueChange={(val) => {
+        onValueChange={(val: unknown) => {
           if (val === 'income' || val === 'expense') setActiveTab(val);
         }}
       >
@@ -229,10 +227,16 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
               <Table>
                 <TableHeader>
                   <TableRow className='bg-muted/50'>
-                    <TableHead className='w-36'>{t('finance.categories.code')}</TableHead>
+                    <TableHead className='w-36'>
+                      {t('finance.categories.code')}
+                    </TableHead>
                     <TableHead>{t('finance.categories.name')}</TableHead>
-                    <TableHead className='w-24 text-center'>{t('finance.categories.sort')}</TableHead>
-                    <TableHead className='text-center w-28'>{t('finance.categories.status')}</TableHead>
+                    <TableHead className='w-24 text-center'>
+                      {t('finance.categories.sort')}
+                    </TableHead>
+                    <TableHead className='text-center w-28'>
+                      {t('finance.categories.status')}
+                    </TableHead>
                     <TableHead className='text-right w-20'>Thao tác</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -249,18 +253,18 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
                         </div>
                       </TableCell>
                       <TableCell className='text-center text-xs text-muted-foreground font-mono'>
-                        {c.sortOrder}
+                        {c.sort}
                       </TableCell>
                       <TableCell className='text-center'>
                         <Badge
-                          variant={c.isActive ? 'outline' : 'secondary'}
+                          variant={c.active ? 'outline' : 'secondary'}
                           className={
-                            c.isActive
+                            c.active
                               ? 'border-emerald-300 text-emerald-700 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:bg-emerald-950/40'
                               : 'text-muted-foreground'
                           }
                         >
-                          {c.isActive
+                          {c.active
                             ? t('finance.categories.active')
                             : t('finance.categories.inactive')}
                         </Badge>
@@ -327,8 +331,12 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='income'>{t('finance.categories.income')}</SelectItem>
-                    <SelectItem value='expense'>{t('finance.categories.expense')}</SelectItem>
+                    <SelectItem value='income'>
+                      {t('finance.categories.income')}
+                    </SelectItem>
+                    <SelectItem value='expense'>
+                      {t('finance.categories.expense')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -385,7 +393,9 @@ export default function FinanceCategoriesSettingsPage(): ReactElement {
               disabled={submission.submitting}
               onClick={() => void handleSave()}
             >
-              {submission.submitting ? 'Đang lưu...' : t('finance.categories.save')}
+              {submission.submitting
+                ? 'Đang lưu...'
+                : t('finance.categories.save')}
             </Button>
           </DialogFooter>
         </DialogContent>

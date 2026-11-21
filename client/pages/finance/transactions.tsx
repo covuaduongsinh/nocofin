@@ -7,11 +7,7 @@ import {
   RefreshCw,
   Edit2,
   Trash2,
-  Calendar,
-  Building2,
   Landmark,
-  ArrowUpDown,
-  Filter,
 } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactElement } from 'react';
 
@@ -19,7 +15,6 @@ import { Loading } from '#components/loading';
 import { PageContainer } from '#components/page-container';
 import { PageHeader } from '#components/page-header';
 import { Button } from '#components/ui/button';
-import { Card, CardContent } from '#components/ui/card';
 import { Badge } from '#components/ui/badge';
 import {
   Table,
@@ -57,10 +52,16 @@ import {
 } from '#components/ui/select';
 import { Textarea } from '#components/ui/textarea';
 
-import { formatDate, formatVnd, getCurrentMonth, getTodayDate } from './format.js';
+import {
+  formatDate,
+  formatVnd,
+  getCurrentMonth,
+  getTodayDate,
+} from './format.js';
 import type {
   FinanceOptionsData,
   FinanceTransaction,
+  FinanceTransactionPage,
   TransactionType,
 } from './types.js';
 
@@ -70,7 +71,7 @@ export default function FinanceTransactionsPage(): ReactElement {
   const toaster = useToaster();
 
   // Filters
-  const [month, setMonth] = useState<string>(getCurrentMonth());
+  const [month, setMonth] = useState<string>(getCurrentMonth);
   const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
   const [selectedAccountId, setSelectedAccountId] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
@@ -88,17 +89,17 @@ export default function FinanceTransactionsPage(): ReactElement {
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [voucherType, setVoucherType] = useState<TransactionType>('income');
-  const [formDate, setFormDate] = useState<string>(getTodayDate());
+  const [formDate, setFormDate] = useState<string>(getTodayDate);
   const [formAmount, setFormAmount] = useState<string>('');
   const [formCategoryId, setFormCategoryId] = useState<string>('');
   const [formAccountId, setFormAccountId] = useState<string>('');
   const [formBranchId, setFormBranchId] = useState<string>('');
   const [formCounterparty, setFormCounterparty] = useState<string>('');
   const [formDescription, setFormDescription] = useState<string>('');
-  const [formReferenceNo, setFormReferenceNo] = useState<string>('');
 
   // Delete State
-  const [deletingTransaction, setDeletingTransaction] = useState<FinanceTransaction | null>(null);
+  const [deletingTransaction, setDeletingTransaction] =
+    useState<FinanceTransaction | null>(null);
 
   const submission = useSubmission({ scope: 'finance-voucher-mutation' });
 
@@ -108,24 +109,16 @@ export default function FinanceTransactionsPage(): ReactElement {
       const queryParams = new URLSearchParams();
       queryParams.set('page', String(page));
       queryParams.set('pageSize', String(pageSize));
-      if (month) queryParams.set('month', month);
-      if (selectedBranchId !== 'all') queryParams.set('branchId', selectedBranchId);
-      if (selectedAccountId !== 'all') queryParams.set('accountId', selectedAccountId);
+      if (month) queryParams.set('period', month);
+      if (selectedBranchId !== 'all')
+        queryParams.set('branchId', selectedBranchId);
+      if (selectedAccountId !== 'all')
+        queryParams.set('accountId', selectedAccountId);
       if (selectedType !== 'all') queryParams.set('type', selectedType);
       if (searchQuery.trim()) queryParams.set('search', searchQuery.trim());
 
       const [txRes, optionsRes] = await Promise.all([
-        api.request<{
-          data:
-            | {
-                rows: FinanceTransaction[];
-                total: number;
-                page: number;
-                pageSize: number;
-              }
-            | FinanceTransaction[];
-          total?: number;
-        }>({
+        api.request<{ data: FinanceTransactionPage }>({
           path: `finance/transactions?${queryParams.toString()}`,
         }),
         api.request<{ data: FinanceOptionsData }>({
@@ -133,19 +126,10 @@ export default function FinanceTransactionsPage(): ReactElement {
         }),
       ]);
 
-      const rawTx = txRes.data;
-      if (Array.isArray(rawTx)) {
-        setTransactions(rawTx);
-        setTotalCount(txRes.total ?? rawTx.length);
-      } else if (rawTx && Array.isArray((rawTx as any).rows)) {
-        setTransactions((rawTx as any).rows);
-        setTotalCount((rawTx as any).total ?? (rawTx as any).rows.length);
-      } else {
-        setTransactions([]);
-        setTotalCount(0);
-      }
+      setTransactions(txRes.data.rows);
+      setTotalCount(txRes.data.total);
       setOptions(optionsRes.data);
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Không thể tải danh sách chứng từ',
@@ -153,18 +137,26 @@ export default function FinanceTransactionsPage(): ReactElement {
     } finally {
       setLoading(false);
     }
-  }, [api, month, selectedBranchId, selectedAccountId, selectedType, searchQuery, page, toaster]);
+  }, [
+    api,
+    month,
+    selectedBranchId,
+    selectedAccountId,
+    selectedType,
+    searchQuery,
+    page,
+    toaster,
+  ]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
   // Totals in current view
-  const safeList = Array.isArray(transactions) ? transactions : [];
-  const currentTotalIncome = safeList
+  const currentTotalIncome = transactions
     .filter((tx) => tx.type === 'income')
     .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-  const currentTotalExpense = safeList
+  const currentTotalExpense = transactions
     .filter((tx) => tx.type === 'expense')
     .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
   const currentNet = currentTotalIncome - currentTotalExpense;
@@ -176,13 +168,12 @@ export default function FinanceTransactionsPage(): ReactElement {
     setFormAmount('');
     setFormCounterparty('');
     setFormDescription('');
-    setFormReferenceNo('');
 
     if (options) {
-      const matchingCats = options.categories.filter((c) => c.type === type && c.isActive);
-      if (matchingCats.length > 0) setFormCategoryId(matchingCats[0]!.id);
-      if (options.accounts.length > 0) setFormAccountId(options.accounts[0]!.id);
-      if (options.branches.length > 0) setFormBranchId(options.branches[0]!.id);
+      const matchingCats = options.categories.filter((c) => c.type === type);
+      if (matchingCats.length > 0) setFormCategoryId(matchingCats[0].id);
+      if (options.accounts.length > 0) setFormAccountId(options.accounts[0].id);
+      if (options.branches.length > 0) setFormBranchId(options.branches[0].id);
     }
 
     setDialogOpen(true);
@@ -191,14 +182,13 @@ export default function FinanceTransactionsPage(): ReactElement {
   const openEditDialog = (tx: FinanceTransaction) => {
     setEditingId(tx.id);
     setVoucherType(tx.type);
-    setFormDate((tx.transactionDate || (tx as any).date || '').slice(0, 10));
+    setFormDate(tx.date);
     setFormAmount(String(tx.amount));
     setFormCategoryId(tx.categoryId);
     setFormAccountId(tx.accountId);
-    setFormBranchId(tx.branchId);
+    setFormBranchId(tx.branchId ?? '');
     setFormCounterparty(tx.counterparty ?? '');
     setFormDescription(tx.description ?? '');
-    setFormReferenceNo(tx.referenceNo ?? '');
     setDialogOpen(true);
   };
 
@@ -235,7 +225,11 @@ export default function FinanceTransactionsPage(): ReactElement {
 
     try {
       const outcome = await submission.run(
-        { action: editingId ? 'update' : 'create', id: editingId, amount: numAmount },
+        {
+          action: editingId ? 'update' : 'create',
+          id: editingId,
+          amount: numAmount,
+        },
         async (key) => {
           if (editingId) {
             return api.request({
@@ -246,10 +240,9 @@ export default function FinanceTransactionsPage(): ReactElement {
                 accountId: formAccountId,
                 categoryId: formCategoryId,
                 amount: numAmount,
-                transactionDate: formDate,
-                counterparty: formCounterparty.trim() || undefined,
-                description: formDescription.trim() || undefined,
-                referenceNo: formReferenceNo.trim() || undefined,
+                date: formDate,
+                counterparty: formCounterparty.trim() || null,
+                description: formDescription.trim() || null,
               },
               headers: {
                 'Idempotency-Key': key,
@@ -266,10 +259,9 @@ export default function FinanceTransactionsPage(): ReactElement {
               accountId: formAccountId,
               categoryId: formCategoryId,
               amount: numAmount,
-              transactionDate: formDate,
-              counterparty: formCounterparty.trim() || undefined,
-              description: formDescription.trim() || undefined,
-              referenceNo: formReferenceNo.trim() || undefined,
+              date: formDate,
+              counterparty: formCounterparty.trim() || null,
+              description: formDescription.trim() || null,
             },
             headers: {
               'Idempotency-Key': key,
@@ -286,7 +278,7 @@ export default function FinanceTransactionsPage(): ReactElement {
         setDialogOpen(false);
         void loadData();
       }
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Lỗi khi lưu phiếu thu/chi',
@@ -317,7 +309,7 @@ export default function FinanceTransactionsPage(): ReactElement {
         setDeletingTransaction(null);
         void loadData();
       }
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Lỗi khi xóa chứng từ',
@@ -356,19 +348,25 @@ export default function FinanceTransactionsPage(): ReactElement {
       {/* Summary KPI Bar for filtered view */}
       <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
         <div className='flex items-center justify-between rounded-xl border bg-card p-3 shadow-2xs'>
-          <div className='text-xs text-muted-foreground'>Tổng thu danh sách:</div>
+          <div className='text-xs text-muted-foreground'>
+            Tổng thu danh sách:
+          </div>
           <div className='font-bold text-emerald-600 dark:text-emerald-400'>
             +{formatVnd(currentTotalIncome)}
           </div>
         </div>
         <div className='flex items-center justify-between rounded-xl border bg-card p-3 shadow-2xs'>
-          <div className='text-xs text-muted-foreground'>Tổng chi danh sách:</div>
+          <div className='text-xs text-muted-foreground'>
+            Tổng chi danh sách:
+          </div>
           <div className='font-bold text-rose-600 dark:text-rose-400'>
             -{formatVnd(currentTotalExpense)}
           </div>
         </div>
         <div className='flex items-center justify-between rounded-xl border bg-card p-3 shadow-2xs'>
-          <div className='text-xs text-muted-foreground'>Dòng tiền chênh lệch:</div>
+          <div className='text-xs text-muted-foreground'>
+            Dòng tiền chênh lệch:
+          </div>
           <div
             className={`font-bold ${
               currentNet >= 0
@@ -425,10 +423,14 @@ export default function FinanceTransactionsPage(): ReactElement {
               }}
             >
               <SelectTrigger className='h-9 w-full'>
-                <SelectValue placeholder={t('finance.transactions.allBranches')} />
+                <SelectValue
+                  placeholder={t('finance.transactions.allBranches')}
+                />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='all'>{t('finance.transactions.allBranches')}</SelectItem>
+                <SelectItem value='all'>
+                  {t('finance.transactions.allBranches')}
+                </SelectItem>
                 {options?.branches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
                     {b.name}
@@ -453,9 +455,15 @@ export default function FinanceTransactionsPage(): ReactElement {
                 <SelectValue placeholder={t('finance.transactions.allTypes')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='all'>{t('finance.transactions.allTypes')}</SelectItem>
-                <SelectItem value='income'>{t('finance.transactions.income')}</SelectItem>
-                <SelectItem value='expense'>{t('finance.transactions.expense')}</SelectItem>
+                <SelectItem value='all'>
+                  {t('finance.transactions.allTypes')}
+                </SelectItem>
+                <SelectItem value='income'>
+                  {t('finance.transactions.income')}
+                </SelectItem>
+                <SelectItem value='expense'>
+                  {t('finance.transactions.expense')}
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -476,10 +484,14 @@ export default function FinanceTransactionsPage(): ReactElement {
               }}
             >
               <SelectTrigger className='h-8 w-48 text-xs'>
-                <SelectValue placeholder={t('finance.transactions.allAccounts')} />
+                <SelectValue
+                  placeholder={t('finance.transactions.allAccounts')}
+                />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='all'>{t('finance.transactions.allAccounts')}</SelectItem>
+                <SelectItem value='all'>
+                  {t('finance.transactions.allAccounts')}
+                </SelectItem>
                 {options?.accounts.map((a) => (
                   <SelectItem key={a.id} value={a.id}>
                     {a.name}
@@ -512,7 +524,9 @@ export default function FinanceTransactionsPage(): ReactElement {
               disabled={loading}
               className='gap-1.5 text-xs'
             >
-              <RefreshCw className={`size-3 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw
+                className={`size-3 ${loading ? 'animate-spin' : ''}`}
+              />
               Tải lại
             </Button>
           </div>
@@ -527,24 +541,42 @@ export default function FinanceTransactionsPage(): ReactElement {
           </div>
         ) : transactions.length === 0 ? (
           <div className='py-12 text-center text-muted-foreground'>
-            <p className='text-base font-medium'>{t('finance.transactions.empty')}</p>
-            <p className='text-xs mt-1'>Thử thay đổi bộ lọc hoặc tạo phiếu thu chi mới</p>
+            <p className='text-base font-medium'>
+              {t('finance.transactions.empty')}
+            </p>
+            <p className='text-xs mt-1'>
+              Thử thay đổi bộ lọc hoặc tạo phiếu thu chi mới
+            </p>
           </div>
         ) : (
           <div className='overflow-x-auto'>
             <Table>
               <TableHeader>
                 <TableRow className='bg-muted/50'>
-                  <TableHead className='w-28'>{t('finance.transactions.code')}</TableHead>
-                  <TableHead className='w-24'>{t('finance.transactions.date')}</TableHead>
-                  <TableHead className='w-20'>{t('finance.transactions.type')}</TableHead>
-                  <TableHead className='w-36'>{t('finance.transactions.category')}</TableHead>
-                  <TableHead className='text-right'>{t('finance.transactions.amount')}</TableHead>
+                  <TableHead className='w-28'>
+                    {t('finance.transactions.code')}
+                  </TableHead>
+                  <TableHead className='w-24'>
+                    {t('finance.transactions.date')}
+                  </TableHead>
+                  <TableHead className='w-20'>
+                    {t('finance.transactions.type')}
+                  </TableHead>
+                  <TableHead className='w-36'>
+                    {t('finance.transactions.category')}
+                  </TableHead>
+                  <TableHead className='text-right'>
+                    {t('finance.transactions.amount')}
+                  </TableHead>
                   <TableHead>{t('finance.transactions.account')}</TableHead>
                   <TableHead>{t('finance.transactions.branch')}</TableHead>
-                  <TableHead>{t('finance.transactions.counterparty')}</TableHead>
+                  <TableHead>
+                    {t('finance.transactions.counterparty')}
+                  </TableHead>
                   <TableHead>{t('finance.transactions.description')}</TableHead>
-                  <TableHead className='text-right w-20'>{t('finance.transactions.actions')}</TableHead>
+                  <TableHead className='text-right w-20'>
+                    {t('finance.transactions.actions')}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -566,7 +598,7 @@ export default function FinanceTransactionsPage(): ReactElement {
 
                     {/* Date */}
                     <TableCell className='text-xs whitespace-nowrap text-muted-foreground'>
-                      {formatDate(tx.transactionDate || (tx as any).date)}
+                      {formatDate(tx.date)}
                     </TableCell>
 
                     {/* Type */}
@@ -608,24 +640,28 @@ export default function FinanceTransactionsPage(): ReactElement {
 
                     {/* Branch */}
                     <TableCell className='text-xs'>
-                      <Badge variant='secondary' className='text-[11px] font-normal'>
+                      <Badge
+                        variant='secondary'
+                        className='text-[11px] font-normal'
+                      >
                         {tx.branchName ?? tx.branchId}
                       </Badge>
                     </TableCell>
 
                     {/* Counterparty */}
-                    <TableCell className='text-xs max-w-36 truncate' title={tx.counterparty ?? ''}>
+                    <TableCell
+                      className='text-xs max-w-36 truncate'
+                      title={tx.counterparty ?? ''}
+                    >
                       {tx.counterparty || '-'}
                     </TableCell>
 
-                    {/* Description & Reference */}
-                    <TableCell className='text-xs max-w-48 truncate text-muted-foreground' title={tx.description ?? ''}>
+                    {/* Description */}
+                    <TableCell
+                      className='text-xs max-w-48 truncate text-muted-foreground'
+                      title={tx.description ?? ''}
+                    >
                       {tx.description || '-'}
-                      {tx.referenceNo && (
-                        <span className='ml-1 text-[10px] text-muted-foreground/80 font-mono'>
-                          (Ref: {tx.referenceNo})
-                        </span>
-                      )}
                     </TableCell>
 
                     {/* Actions */}
@@ -695,8 +731,8 @@ export default function FinanceTransactionsPage(): ReactElement {
               {editingId
                 ? t('finance.transactions.editVoucher')
                 : voucherType === 'income'
-                ? t('finance.transactions.createIncome')
-                : t('finance.transactions.createExpense')}
+                  ? t('finance.transactions.createIncome')
+                  : t('finance.transactions.createExpense')}
             </DialogTitle>
             <DialogDescription>
               {editingId
@@ -721,7 +757,7 @@ export default function FinanceTransactionsPage(): ReactElement {
                     setVoucherType('income');
                     if (options) {
                       const match = options.categories.find(
-                        (c) => c.type === 'income' && c.isActive,
+                        (c) => c.type === 'income',
                       );
                       if (match) setFormCategoryId(match.id);
                     }
@@ -731,12 +767,14 @@ export default function FinanceTransactionsPage(): ReactElement {
                 </Button>
                 <Button
                   type='button'
-                  variant={voucherType === 'expense' ? 'destructive' : 'outline'}
+                  variant={
+                    voucherType === 'expense' ? 'destructive' : 'outline'
+                  }
                   onClick={() => {
                     setVoucherType('expense');
                     if (options) {
                       const match = options.categories.find(
-                        (c) => c.type === 'expense' && c.isActive,
+                        (c) => c.type === 'expense',
                       );
                       if (match) setFormCategoryId(match.id);
                     }
@@ -796,7 +834,7 @@ export default function FinanceTransactionsPage(): ReactElement {
                   </SelectTrigger>
                   <SelectContent>
                     {options?.categories
-                      .filter((c) => c.type === voucherType && c.isActive)
+                      .filter((c) => c.type === voucherType)
                       .map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.name}
@@ -820,13 +858,11 @@ export default function FinanceTransactionsPage(): ReactElement {
                     <SelectValue placeholder='Chọn quỹ / TK' />
                   </SelectTrigger>
                   <SelectContent>
-                    {options?.accounts
-                      .filter((a) => a.isActive)
-                      .map((a) => (
-                        <SelectItem key={a.id} value={a.id}>
-                          {a.name}
-                        </SelectItem>
-                      ))}
+                    {options?.accounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -848,13 +884,11 @@ export default function FinanceTransactionsPage(): ReactElement {
                     <SelectValue placeholder='Chọn cơ sở' />
                   </SelectTrigger>
                   <SelectContent>
-                    {options?.branches
-                      .filter((b) => b.isActive)
-                      .map((b) => (
-                        <SelectItem key={b.id} value={b.id}>
-                          {b.name}
-                        </SelectItem>
-                      ))}
+                    {options?.branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -870,19 +904,6 @@ export default function FinanceTransactionsPage(): ReactElement {
                   className='mt-1'
                 />
               </div>
-            </div>
-
-            {/* Reference Bill No and Description */}
-            <div>
-              <label className='text-xs font-medium text-muted-foreground'>
-                Mã giao dịch / Bill tham chiếu
-              </label>
-              <Input
-                placeholder='Mã giao dịch ngân hàng, số ủy nhiệm chi...'
-                value={formReferenceNo}
-                onChange={(e) => setFormReferenceNo(e.target.value)}
-                className='mt-1'
-              />
             </div>
 
             <div>
@@ -937,7 +958,10 @@ export default function FinanceTransactionsPage(): ReactElement {
             <AlertDialogTitle>Xác nhận xóa chứng từ</AlertDialogTitle>
             <AlertDialogDescription>
               Bạn có chắc chắn muốn xóa chứng từ{' '}
-              <strong className='text-foreground'>{deletingTransaction?.code}</strong> - số tiền{' '}
+              <strong className='text-foreground'>
+                {deletingTransaction?.code}
+              </strong>{' '}
+              - số tiền{' '}
               <strong className='text-foreground'>
                 {formatVnd(deletingTransaction?.amount)}
               </strong>

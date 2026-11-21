@@ -99,14 +99,92 @@ test('Finance API requires authentication and respects role permissions', async 
   expect(options.accounts.length).toBeGreaterThanOrEqual(3);
   expect(options.categories.length).toBeGreaterThanOrEqual(5);
 
+  // The options are active-only and carry the fields the voucher form reads.
+  expect(Object.keys(options.branches[0]).sort()).toEqual([
+    'code',
+    'id',
+    'name',
+  ]);
+  expect(Object.keys(options.accounts[0]).sort()).toEqual([
+    'accountNumber',
+    'bankName',
+    'code',
+    'id',
+    'kind',
+    'name',
+  ]);
+  expect(Object.keys(options.categories[0]).sort()).toEqual([
+    'code',
+    'id',
+    'name',
+    'sort',
+    'type',
+  ]);
+  expect(typeof options.categories[0].sort).toBe('number');
+  expect(options.categories.some((c: any) => c.type === 'income')).toBe(true);
+  expect(options.categories.some((c: any) => c.type === 'expense')).toBe(true);
+
+  // The accounts list: `active` is a boolean (not 0/1) and balances are numbers on every dialect.
+  const accountsBefore = (
+    await (await director.fetch('/finance/accounts')).json()
+  ).data;
+  expect(accountsBefore.length).toBeGreaterThanOrEqual(3);
+  for (const account of accountsBefore) {
+    expect(account).toMatchObject({
+      id: expect.any(String),
+      code: expect.any(String),
+      name: expect.any(String),
+      kind: expect.stringMatching(/^(bank|cash|ewallet)$/),
+      active: true,
+      openingBalance: expect.any(Number),
+      currentBalance: expect.any(Number),
+      totalIncome: expect.any(Number),
+      totalExpense: expect.any(Number),
+    });
+    expect(account).not.toHaveProperty('isActive');
+  }
+
+  const branchesList = (
+    await (await director.fetch('/finance/branches')).json()
+  ).data;
+  for (const branch of branchesList) {
+    expect(branch).toMatchObject({ active: true, kind: expect.any(String) });
+    expect(branch).not.toHaveProperty('isActive');
+  }
+
   const branchId = options.branches[0].id;
   const accountId = options.accounts[0].id;
+  const balanceBefore = accountsBefore.find(
+    (a: any) => a.id === accountId,
+  ).currentBalance;
   const incomeCategory = options.categories.find(
     (c: any) => c.type === 'income',
   );
   const expenseCategory = options.categories.find(
     (c: any) => c.type === 'expense',
   );
+
+  // A voucher naming a missing category, or a category of the other type, is a 400 naming the field — not a 500 from
+  // the foreign key — and consumes no voucher number.
+  for (const categoryId of ['missing-category', expenseCategory.id]) {
+    const rejected = await director.fetch(
+      '/finance/transactions',
+      json({
+        type: 'income',
+        date: '2026-11-20',
+        amount: 1000,
+        categoryId,
+        accountId,
+        branchId,
+      }),
+    );
+    expect(rejected.status).toBe(400);
+    expect((await rejected.json()).error).toMatchObject({
+      status: 'INVALID_ARGUMENT',
+      reason: 'FINANCE_VOUCHER_REFERENCE_INVALID',
+      fieldViolations: [expect.objectContaining({ field: 'categoryId' })],
+    });
+  }
 
   // 6. Test POST /finance/transactions (Income - Thu học phí)
   const createIncomeRes = await director.fetch(
@@ -124,7 +202,7 @@ test('Finance API requires authentication and respects role permissions', async 
   );
   expect(createIncomeRes.status).toBe(200);
   const incomeTx = (await createIncomeRes.json()).data;
-  expect(incomeTx.code).toMatch(/^PT-2026-\d{4}$/);
+  expect(incomeTx.code).toBe('PT-2026-0001');
   expect(incomeTx.amount).toBe(1500000);
 
   // 7. Test POST /finance/transactions (Expense - Chi thuê mặt bằng)
@@ -147,14 +225,34 @@ test('Finance API requires authentication and respects role permissions', async 
   expect(expenseTx.amount).toBe(500000);
 
   // 8. Test GET /finance/transactions (List & Search)
-  const listRes = await director.fetch(
-    '/finance/transactions?period=2026-11',
-  );
+  const listRes = await director.fetch('/finance/transactions?period=2026-11');
   expect(listRes.status).toBe(200);
   const listData = (await listRes.json()).data;
-  expect(listData.total).toBe(2);
-  expect(listData.rows[0].categoryName).toBeDefined();
-  expect(listData.rows[0].accountName).toBeDefined();
+  expect(listData).toMatchObject({ total: 2, page: 1, pageSize: 20 });
+  const listedIncome = listData.rows.find((r: any) => r.id === incomeTx.id);
+  expect(listedIncome).toMatchObject({
+    code: incomeTx.code,
+    type: 'income',
+    date: '2026-11-20',
+    period: '2026-11',
+    amount: 1500000,
+    categoryId: incomeCategory.id,
+    accountId,
+    branchId,
+    categoryName: incomeCategory.name,
+    accountName: options.accounts[0].name,
+    branchName: options.branches[0].name,
+    counterparty: 'Phụ huynh em Nguyễn Văn An',
+    description: 'Học phí khoá cờ vua K28 Cơ sở 1',
+  });
+  expect(listedIncome).not.toHaveProperty('transactionDate');
+
+  // The account's balance moved by the two vouchers and the account stays active.
+  const accountAfter = (
+    await (await director.fetch('/finance/accounts')).json()
+  ).data.find((a: any) => a.id === accountId);
+  expect(accountAfter.active).toBe(true);
+  expect(accountAfter.currentBalance).toBe(balanceBefore + 1500000 - 500000);
 
   // Test Search
   const searchRes = await director.fetch(
@@ -172,6 +270,29 @@ test('Finance API requires authentication and respects role permissions', async 
   expect(overviewAfter.data.totalIncome).toBe(1500000);
   expect(overviewAfter.data.totalExpense).toBe(500000);
   expect(overviewAfter.data.netFlow).toBe(1000000);
+  expect(
+    overviewAfter.data.branches.find((b: any) => b.id === branchId),
+  ).toMatchObject({
+    active: true,
+    totalIncome: 1500000,
+    totalExpense: 500000,
+    netFlow: 1000000,
+  });
+  expect(overviewAfter.data.incomeCategories).toEqual([
+    {
+      id: incomeCategory.id,
+      code: incomeCategory.code,
+      name: incomeCategory.name,
+      amount: 1500000,
+      percentage: 100,
+    },
+  ]);
+  expect(overviewAfter.data.dailyFlow).toEqual([
+    { date: '2026-11-20', income: 1500000, expense: 500000 },
+  ]);
+  expect(
+    overviewAfter.data.accounts.find((a: any) => a.id === accountId),
+  ).toMatchObject({ active: true, currentBalance: balanceBefore + 1000000 });
 
   // 10. Test PATCH /finance/transactions/:id
   const updateRes = await director.fetch(
@@ -179,6 +300,12 @@ test('Finance API requires authentication and respects role permissions', async 
     json({ amount: 1800000 }, 'PATCH'),
   );
   expect(updateRes.status).toBe(200);
+
+  const missingRes = await director.fetch(
+    '/finance/transactions/missing-voucher',
+    json({ amount: 1 }, 'PATCH'),
+  );
+  expect(missingRes.status).toBe(404);
 
   // 11. Test DELETE /finance/transactions/:id
   const deleteRes = await director.fetch(

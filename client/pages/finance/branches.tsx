@@ -7,7 +7,6 @@ import {
   RefreshCw,
   School,
   Briefcase,
-  Layers,
 } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactElement } from 'react';
 
@@ -55,10 +54,14 @@ export default function FinanceBranchesPage(): ReactElement {
 
   // Dialog State
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
-  const [editingBranch, setEditingBranch] = useState<FinanceBranch | null>(null);
+  const [editingBranch, setEditingBranch] = useState<FinanceBranch | null>(
+    null,
+  );
   const [formCode, setFormCode] = useState<string>('');
   const [formName, setFormName] = useState<string>('');
-  const [formKind, setFormKind] = useState<'club' | 'school' | 'office'>('club');
+  const [formKind, setFormKind] = useState<'club' | 'school' | 'office'>(
+    'club',
+  );
   const [formNote, setFormNote] = useState<string>('');
   const [formIsActive, setFormIsActive] = useState<boolean>(true);
 
@@ -71,7 +74,7 @@ export default function FinanceBranchesPage(): ReactElement {
         path: 'finance/branches',
       });
       setBranches(res.data);
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Không thể tải danh sách cơ sở',
@@ -101,7 +104,7 @@ export default function FinanceBranchesPage(): ReactElement {
     setFormName(branch.name);
     setFormKind(branch.kind);
     setFormNote(branch.note ?? '');
-    setFormIsActive(branch.isActive);
+    setFormIsActive(branch.active);
     setDialogOpen(true);
   };
 
@@ -127,7 +130,7 @@ export default function FinanceBranchesPage(): ReactElement {
                 name: formName.trim(),
                 kind: formKind,
                 note: formNote.trim() || null,
-                isActive: formIsActive,
+                active: formIsActive,
               },
               headers: { 'Idempotency-Key': key },
             });
@@ -141,7 +144,7 @@ export default function FinanceBranchesPage(): ReactElement {
               name: formName.trim(),
               kind: formKind,
               note: formNote.trim() || null,
-              isActive: formIsActive,
+              active: formIsActive,
             },
             headers: { 'Idempotency-Key': key },
           });
@@ -151,12 +154,14 @@ export default function FinanceBranchesPage(): ReactElement {
       if (outcome) {
         toaster.show({
           type: 'success',
-          title: editingBranch ? 'Cập nhật cơ sở thành công' : 'Thêm cơ sở thành công',
+          title: editingBranch
+            ? 'Cập nhật cơ sở thành công'
+            : 'Thêm cơ sở thành công',
         });
         setDialogOpen(false);
         void loadData();
       }
-    } catch (err: unknown) {
+    } catch {
       toaster.show({
         type: 'error',
         title: 'Lỗi khi lưu cơ sở',
@@ -188,7 +193,9 @@ export default function FinanceBranchesPage(): ReactElement {
             disabled={loading}
             className='gap-1.5'
           >
-            <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`size-3.5 ${loading ? 'animate-spin' : ''}`}
+            />
             Làm mới
           </Button>
         </div>
@@ -208,11 +215,15 @@ export default function FinanceBranchesPage(): ReactElement {
           <Table>
             <TableHeader>
               <TableRow className='bg-muted/50'>
-                <TableHead className='w-28'>{t('finance.branches.code')}</TableHead>
+                <TableHead className='w-28'>
+                  {t('finance.branches.code')}
+                </TableHead>
                 <TableHead>{t('finance.branches.name')}</TableHead>
                 <TableHead>{t('finance.branches.kind')}</TableHead>
                 <TableHead>{t('finance.branches.note')}</TableHead>
-                <TableHead className='text-center w-28'>{t('finance.branches.status')}</TableHead>
+                <TableHead className='text-center w-28'>
+                  {t('finance.branches.status')}
+                </TableHead>
                 <TableHead className='text-right w-20'>Thao tác</TableHead>
               </TableRow>
             </TableHeader>
@@ -238,22 +249,24 @@ export default function FinanceBranchesPage(): ReactElement {
                     {b.kind === 'club'
                       ? t('finance.branches.club')
                       : b.kind === 'school'
-                      ? t('finance.branches.school')
-                      : t('finance.branches.office')}
+                        ? t('finance.branches.school')
+                        : t('finance.branches.office')}
                   </TableCell>
                   <TableCell className='text-xs text-muted-foreground'>
                     {b.note || '-'}
                   </TableCell>
                   <TableCell className='text-center'>
                     <Badge
-                      variant={b.isActive ? 'outline' : 'secondary'}
+                      variant={b.active ? 'outline' : 'secondary'}
                       className={
-                        b.isActive
+                        b.active
                           ? 'border-emerald-300 text-emerald-700 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:bg-emerald-950/40'
                           : 'text-muted-foreground'
                       }
                     >
-                      {b.isActive ? t('finance.branches.active') : t('finance.branches.inactive')}
+                      {b.active
+                        ? t('finance.branches.active')
+                        : t('finance.branches.inactive')}
                     </Badge>
                   </TableCell>
                   <TableCell className='text-right'>
@@ -308,7 +321,11 @@ export default function FinanceBranchesPage(): ReactElement {
                 <Select
                   value={formKind}
                   onValueChange={(val) => {
-                    if (val === 'club' || val === 'school' || val === 'office') {
+                    if (
+                      val === 'club' ||
+                      val === 'school' ||
+                      val === 'office'
+                    ) {
                       setFormKind(val);
                     }
                   }}
@@ -317,9 +334,15 @@ export default function FinanceBranchesPage(): ReactElement {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='club'>{t('finance.branches.club')}</SelectItem>
-                    <SelectItem value='school'>{t('finance.branches.school')}</SelectItem>
-                    <SelectItem value='office'>{t('finance.branches.office')}</SelectItem>
+                    <SelectItem value='club'>
+                      {t('finance.branches.club')}
+                    </SelectItem>
+                    <SelectItem value='school'>
+                      {t('finance.branches.school')}
+                    </SelectItem>
+                    <SelectItem value='office'>
+                      {t('finance.branches.office')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -377,7 +400,9 @@ export default function FinanceBranchesPage(): ReactElement {
               disabled={submission.submitting}
               onClick={() => void handleSave()}
             >
-              {submission.submitting ? 'Đang lưu...' : t('finance.branches.save')}
+              {submission.submitting
+                ? 'Đang lưu...'
+                : t('finance.branches.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
